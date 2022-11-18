@@ -1,0 +1,4 @@
+github.com/c4pt0r/log v0.0.0-20211004143616-aa6380016a47 h1:I7bb8MbleLvoW6scHXngCQaroNa9slYTaYOaQEsv2TQ=
+github.com/c4pt0r/log v0.0.0-20211004143616-aa6380016a47/go.mod h1:N78ACK7UQq5KjTLWQPw2A7UuzX712vN9akunb8ydlck=
+github.com/gomarkdown/markdown v0.0.0-20221013030248-663e2500819c h1:iyaGYbCmcYK0Ja9a3OUa2Fo+EaN0cbLu0eKpBwPFzc8=
+github.com/gomarkdown/markdown v0.0.0-20221013030248-663e2500819c/go.mod h1:JDGcbDT52eL4fju3sZ4TeHGsQwhG9nbDV21aMyhwPoA=
