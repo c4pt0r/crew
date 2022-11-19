@@ -97,11 +97,7 @@ var (
 func init() {
 	flag.Parse()
 	var err error
-	_rootDir, err = filepath.Abs(*rootDir)
-	if err != nil {
-		log.Fatal(err)
-	}
-
+	_rootDir = *rootDir
 	_rootNode, err = newNodeFromPath(_rootDir)
 	if err != nil {
 		log.Fatal(err)
@@ -247,10 +243,13 @@ func (n *node) String() string {
 }
 
 func newNodeFromPath(fullname string) (*node, error) {
-	fpath, err := filepath.Abs(fullname)
-	if err != nil {
-		return nil, err
-	}
+	/*
+		fpath, err := filepath.Abs(fullname)
+		if err != nil {
+			return nil, err
+		}
+	*/
+	fpath := fullname
 	// check if is a directory
 	info, err := os.Stat(fpath)
 	if err != nil {
@@ -313,9 +312,6 @@ func filterNode(ns []*node, f func(*node) bool) []*node {
 }
 
 func printList(from *node, to *node) (string, error) {
-	if from.filepath == to.filepath {
-		return "", nil
-	}
 	var buf bytes.Buffer
 	buf.WriteString("<ul>")
 	subnodes, err := from.getSubNodes()
@@ -332,7 +328,6 @@ func printList(from *node, to *node) (string, error) {
 		}
 
 		if n.isDir && strings.HasPrefix(to.filepath, n.filepath) {
-			log.I("found dir", n.filepath, to.filepath)
 			buf.WriteString("<ul>")
 			out, err := printList(n, to)
 			if err != nil {
