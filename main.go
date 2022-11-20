@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -20,6 +22,7 @@ import (
 var (
 	// rootDir is the root directory of the website.
 	rootDir = flag.String("rootDir", "./site", "root directory")
+
 	// _rootDir is the absolute path to the root directory
 	_rootDir string
 
@@ -34,38 +37,33 @@ const (
     <title>{{ .Title }}</title>
     <link rel="stylesheet" href="/_static/style.css" type="text/css" media="screen, handheld" title="default">
     <link rel="shortcut icon" href="/_static/favicon.ico" type="image/vnd.microsoft.icon">
-
     <meta charset="UTF-8">
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"> 
 </head>
 <body>
 
 <header>
-    <nav>
+    <nav class="head-nav">
+		<div class="left">
+			<a href="http://quotes.cat-v.org">quotes</a> |
+			<a href="http://doc.cat-v.org">docs</a> |
+			<a href="http://repo.cat-v.org">repo</a> |
+			<a href="http://go-lang.cat-v.org">golang</a> |
+			<a href="http://sam.cat-v.org">sam</a> |
+			<a href="http://man.cat-v.org">man</a> |
+			<a href="http://acme.cat-v.org">acme</a> |
+			<a href="http://glenda.cat-v.org">Glenda</a> |
+			<a href="http://ninetimes.cat-v.org">9times</a> |
+			<a href="http://harmful.cat-v.org">harmful</a> |
+			<a href="http://9p.cat-v.org/">9P</a> |
+			<a href="http://cat-v.org">cat-v.org</a>
+		</div>
 
-    <div class="left">
-		<a href="http://quotes.cat-v.org">quotes</a> |
-		<a href="http://doc.cat-v.org">docs</a> |
-		<a href="http://repo.cat-v.org">repo</a> |
-		<a href="http://go-lang.cat-v.org">golang</a> |
-		<a href="http://sam.cat-v.org">sam</a> |
-		<a href="http://man.cat-v.org">man</a> |
-		<a href="http://acme.cat-v.org">acme</a> |
-		<a href="http://glenda.cat-v.org">Glenda</a> |
-		<a href="http://ninetimes.cat-v.org">9times</a> |
-		<a href="http://harmful.cat-v.org">harmful</a> |
-		<a href="http://9p.cat-v.org/">9P</a> |
-		<a href="http://cat-v.org">cat-v.org</a>
-    </div>
-
-    <div class="right">
-      <span class="doNotDisplay">Related sites:</span>
-      | <a href="http://cat-v.org/update_log">site updates</a>
-      | <a href="/sitemap">site map</a> |
-    </div>
-
+		<div class="right">
+		  <span class="doNotDisplay">Related sites:</span>
+		  | <a href="/sitemap">site map</a>
+		</div>
     </nav>
-
     <h1><a href="/">{{ .Headline }} <span id="headerSubTitle">{{ .SubHeadline }}</span></a></h1>
 </header>
 
@@ -76,21 +74,19 @@ const (
 </nav>
 
 <article>
-{{ .Body }}
+	{{ .Body }}
 </article>
 
 <footer>
 <br class="doNotDisplay doNotPrint" />
-
-<div style="margin-right: auto;"><a href="http://werc.cat-v.org">Powered by werc</a></div>
-<div><form action="/_search/" method="POST"><input type="text" id="searchtext" name="q"> <input type="submit" value="Search"></form></div>
+<div style="margin-right: auto;"><a href="http://werc.cat-v.org">Powered by crew</a></div>
 </footer>
 </body></html>
 `
 )
 
 var (
-	// for render navbar
+	// for render navbar & sitemap
 	_rootNode *node
 )
 
@@ -108,7 +104,13 @@ type node struct {
 	// filepath is the absolute path to the file
 	filepath string
 	title    string
+	desc     string
 	isDir    bool
+}
+
+type nodeConf struct {
+	Title string `json:"title'"`
+	Desc  string `json:"desc"`
 }
 
 func (n *node) URL() string {
@@ -145,6 +147,7 @@ func (n *node) getSubNodes() ([]*node, error) {
 		if err != nil {
 			return nil, err
 		}
+		// skip hidden/meta files
 		if strings.HasPrefix(f.Name(), "_") {
 			continue
 		}
@@ -210,15 +213,34 @@ func (n *node) renderHTML() ([]byte, error) {
 	return content, nil
 }
 
+func nodeTree(wr io.Writer, root *node, prefix string) {
+	subnodes, _ := root.getSubNodes()
+
+	if len(subnodes) > 0 {
+		wr.Write([]byte(prefix + "<ul>"))
+	}
+	for _, n := range subnodes {
+		if n.isDir {
+			wr.Write([]byte("<li><a href=\"" + n.URL() + "/\">" + n.title + "/</a> " + n.desc + "</li>"))
+		} else {
+			wr.Write([]byte("<li><a href=\"" + n.URL() + "\">" + n.title + "</a> " + n.desc + "</li>"))
+		}
+		nodeTree(wr, n, prefix)
+	}
+	if len(subnodes) > 0 {
+		wr.Write([]byte(prefix + "</ul>"))
+	}
+}
+
 func nodesToHTML(ns []*node) []byte {
 	var buf bytes.Buffer
 	buf.WriteString("<ul>")
 	for _, n := range ns {
 		buf.WriteString("<li>")
 		if n.isDir {
-			buf.WriteString("<a href=\"" + n.URL() + "/\">" + n.title + "/</a>")
+			buf.WriteString("<a href=\"" + n.URL() + "/\">" + n.title + "/</a> " + n.desc)
 		} else {
-			buf.WriteString("<a href=\"" + n.URL() + "\">" + n.title + "</a>")
+			buf.WriteString("<a href=\"" + n.URL() + "\">" + n.title + "</a> " + n.desc)
 		}
 		buf.WriteString("</li>")
 	}
@@ -227,12 +249,24 @@ func nodesToHTML(ns []*node) []byte {
 }
 
 func (n *node) renderDir() ([]byte, error) {
+	// if there's _index.md or _index.html, render that
+	indexFile := path.Join(n.filepath, "_index.md")
+	if fileExists(indexFile) {
+		indexNode, err := newNodeFromPath(indexFile)
+		if err != nil {
+			return nil, err
+		}
+		return indexNode.render()
+	}
 	// get the sub nodes
 	subNodes, err := n.getSubNodes()
 	if err != nil {
 		return nil, err
 	}
-	return nodesToHTML(subNodes), nil
+	var buf bytes.Buffer
+	buf.WriteString("<h1>" + n.URL() + "</h1>")
+	buf.Write(nodesToHTML(subNodes))
+	return buf.Bytes(), nil
 }
 
 func (n *node) String() string {
@@ -242,13 +276,18 @@ func (n *node) String() string {
 	return fmt.Sprintf("%s [F]: %s", n.filepath, n.title)
 }
 
+func fileExists(fpath string) bool {
+	_, err := os.Stat(fpath)
+	if os.IsNotExist(err) {
+		return false
+	} else if err != nil {
+		log.E(err)
+		return false
+	}
+	return true
+}
+
 func newNodeFromPath(fullname string) (*node, error) {
-	/*
-		fpath, err := filepath.Abs(fullname)
-		if err != nil {
-			return nil, err
-		}
-	*/
 	fpath := fullname
 	// check if is a directory
 	info, err := os.Stat(fpath)
@@ -259,9 +298,37 @@ func newNodeFromPath(fullname string) (*node, error) {
 	title := strings.TrimSuffix(fname, filepath.Ext(fname))
 	// replace underscores with spaces
 	title = strings.Replace(title, "_", " ", -1)
+	// node desc
+	desc := ""
+	// if there's a config file, load config
+	if !info.IsDir() {
+		dir, fn := path.Split(fpath)
+		cfgPath := path.Join(dir, "_"+fn+".conf.json")
+		if fileExists(cfgPath) {
+			data, err := ioutil.ReadFile(cfgPath)
+			if err != nil {
+				return nil, err
+			}
+			var cfg nodeConf
+			err = json.Unmarshal(data, &cfg)
+			if err != nil {
+				return nil, err
+			}
+			if len(cfg.Title) > 0 {
+				title = cfg.Title
+			}
+			if len(cfg.Desc) > 0 {
+				desc = cfg.Desc
+			}
+		}
+	} else {
+		// TODO dir config
+	}
+
 	return &node{
 		filepath: fpath,
 		title:    title,
+		desc:     desc,
 		isDir:    info.IsDir(),
 	}, nil
 }
@@ -278,8 +345,8 @@ func newNodeFromPath(fullname string) (*node, error) {
 // | Footer                 |
 // +------------------------+
 type page struct {
-	node    *node
-	tplName string
+	node *node
+	tp   string
 	// for the template
 	Header      string
 	Headline    string
@@ -289,6 +356,9 @@ type page struct {
 	Body        string
 	Title       string
 	Vals        map[string]string
+
+	// for different type
+	bodyRender func(p *page, params map[string]string) ([]byte, error)
 }
 
 func pageFromNode(n *node) *page {
@@ -298,6 +368,17 @@ func pageFromNode(n *node) *page {
 		SubHeadline: "Bringing more minimalism and sanity to the web, in a suckless way",
 	}
 	p.Title = n.title
+	return p
+}
+
+func sitemapPage() *page {
+	p := pageFromNode(_rootNode)
+	p.bodyRender = func(p *page, params map[string]string) ([]byte, error) {
+		var buf bytes.Buffer
+		buf.WriteString("<h1> Site map </h1>")
+		nodeTree(&buf, p.node, "")
+		return buf.Bytes(), nil
+	}
 	return p
 }
 
@@ -311,6 +392,14 @@ func filterNode(ns []*node, f func(*node) bool) []*node {
 	return filtered
 }
 
+func i(text string) string {
+	return "<i>" + text + "</i>"
+}
+
+func b(text string) string {
+	return "<b>" + text + "</b>"
+}
+
 func printList(from *node, to *node) (string, error) {
 	var buf bytes.Buffer
 	buf.WriteString("<ul>")
@@ -320,11 +409,25 @@ func printList(from *node, to *node) (string, error) {
 	}
 	for _, n := range subnodes {
 		buf.WriteString("<li>")
-
+		title := n.title
 		if n.isDir {
-			buf.WriteString("<a href=\"" + n.URL() + "\">" + n.title + "/</a>")
+			if strings.HasPrefix(to.filepath, n.filepath) {
+				title = i(title)
+				if n.filepath == to.filepath {
+					title = b(title)
+				}
+				title = "» " + title
+			} else {
+				title = "› " + title
+			}
+			buf.WriteString("<a href=\"" + n.URL() + "\">" + title + "/</a>")
 		} else {
-			buf.WriteString("<a href=\"" + n.URL() + "\">" + n.title + "</a>")
+			title = "› " + title
+			if n.filepath == to.filepath {
+				title = "» " + n.title
+				title = b(title)
+			}
+			buf.WriteString("<a href=\"" + n.URL() + "\">" + title + "</a>")
 		}
 
 		if n.isDir && strings.HasPrefix(to.filepath, n.filepath) {
@@ -356,13 +459,21 @@ func (p *page) render() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	// get the body
-	body, err := p.node.render()
-	if err != nil {
-		return nil, err
+	var body []byte
+	if p.bodyRender == nil {
+		body, err = p.node.render()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		body, err = p.bodyRender(p, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 	p.Body = string(body)
-
 	// get nav
 	nav, err := p.renderNav()
 	if err != nil {
@@ -392,34 +503,35 @@ func serverStatic(w http.ResponseWriter, r *http.Request) {
 func httpServer() error {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// get the path from the request, and remove the leading slash
+		var page *page
 		path := r.URL.Path[1:]
-		if strings.HasPrefix(path, "_static/") {
+		if strings.HasPrefix(path, "_static") {
 			serverStatic(w, r)
 			return
-		}
-
-		// TODO: get buffered node
-
-		// get the node for the path
-		fpath := filepath.Join(_rootDir, path)
-		node, err := newNodeFromPath(fpath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				http.NotFound(w, r)
+		} else if strings.HasPrefix(path, "sitemap") {
+			// site map
+			page = sitemapPage()
+		} else {
+			// get the node for the path
+			fpath := filepath.Join(_rootDir, path)
+			node, err := newNodeFromPath(fpath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					http.NotFound(w, r)
+					return
+				} else {
+					log.E(err)
+					http.Error(w, "", http.StatusInternalServerError)
+				}
 				return
-			} else {
+			}
+			if err != nil {
 				log.E(err)
 				http.Error(w, "", http.StatusInternalServerError)
+				return
 			}
-			return
-		}
-		log.I(node)
-		// render the node
-		page := pageFromNode(node)
-		if err != nil {
-			log.E(err)
-			http.Error(w, "", http.StatusInternalServerError)
-			return
+			// render the node
+			page = pageFromNode(node)
 		}
 		content, err := page.render()
 		if err != nil {
@@ -428,7 +540,6 @@ func httpServer() error {
 			return
 		}
 		// write the content to the response
-		log.I(node.URL())
 		w.Write([]byte(content))
 	})
 	return http.ListenAndServe(*addr, nil)
