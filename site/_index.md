@@ -41,10 +41,9 @@ Install Requirements
 Source
 ------
 
-To get a copy of the latest development code using mercurial, do:
+To get a copy of the latest development code using git, do:
 
        git clone https://github.com/c4pt0r/crew
-    
 
 You can also [browse the online repository](https://github.com/c4pt0r/crew).
 
@@ -58,6 +57,8 @@ Contact
 ~~On irc, join [#cat-v](irc://irc.oftc.org/cat-v) on irc.oftc.org~~
 
 <span style="background-color:#FEDD00">I don't use IRC :), just feel free to fire issue on Github, I'll take a look when I have time</span>
+
+~~Don't~~<span style="background-color:#FEDD00"> mail to me: i@huangdx.net</span>
 
 License
 -------
