@@ -56,7 +56,7 @@ Contact
 
 ~~On irc, join [#cat-v](irc://irc.oftc.org/cat-v) on irc.oftc.org~~
 
-<span style="background-color:#FEDD00">I don't use IRC :), just feel free to fire issue on Github, I'll take a look when I have time</span>
+<span style="background-color:#FEDD00">I don't use IRC :), just feel free to [fire issue on Github](https://github.com/c4pt0r/crew/issues), I'll take a look when I have time</span>
 
 ~~Don't~~<span style="background-color:#FEDD00"> mail to me: i@huangdx.net</span>
 
