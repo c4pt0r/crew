@@ -1,2 +1,2 @@
 # crew
-a suckless werc
+a suckless [werc](werc.cat-v.org/)
