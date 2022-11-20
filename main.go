@@ -79,7 +79,7 @@ const (
 
 <footer>
 <br class="doNotDisplay doNotPrint" />
-<div style="margin-right: auto;"><a href="http://werc.cat-v.org">Powered by crew</a></div>
+<div style="margin-right: auto;"><a href="http://crew.0xffff.me">Powered by crew</a></div>
 </footer>
 </body></html>
 `
@@ -93,9 +93,11 @@ var (
 func init() {
 	flag.Parse()
 	var err error
+
 	_rootDir = *rootDir
 	_rootNode, err = newNodeFromPath(_rootDir)
 	if err != nil {
+		// this should never happen
 		log.Fatal(err)
 	}
 }
@@ -500,10 +502,11 @@ func serverStatic(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filepath)
 }
 
-func httpServer() error {
+func httpServer(addr string) error {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// get the path from the request, and remove the leading slash
 		var page *page
+		log.Infof("%s %s %s", r.RemoteAddr, r.Method, r.URL)
 		path := r.URL.Path[1:]
 		if strings.HasPrefix(path, "_static") {
 			serverStatic(w, r)
@@ -542,9 +545,9 @@ func httpServer() error {
 		// write the content to the response
 		w.Write([]byte(content))
 	})
-	return http.ListenAndServe(*addr, nil)
+	return http.ListenAndServe(addr, nil)
 }
 
 func main() {
-	log.Fatal(httpServer())
+	log.Fatal(httpServer(*addr))
 }
