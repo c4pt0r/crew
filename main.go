@@ -23,6 +23,9 @@ var (
 	// rootDir is the root directory of the website.
 	rootDir = flag.String("rootDir", "./site", "root directory")
 
+	siteName     = flag.String("sitename", "crew", "site name")
+	siteSubtitle = flag.String("site-subtitle", "Bringing more minimalism and sanity to the web, in a suckless way", "site name")
+
 	// _rootDir is the absolute path to the root directory
 	_rootDir string
 
@@ -150,7 +153,7 @@ func (n *node) getSubNodes() ([]*node, error) {
 			return nil, err
 		}
 		// skip hidden/meta files
-		if strings.HasPrefix(f.Name(), "_") {
+		if strings.HasPrefix(f.Name(), "_") || strings.HasPrefix(f.Name(), ".") {
 			continue
 		}
 		ns = append(ns, node)
@@ -366,8 +369,8 @@ type page struct {
 func pageFromNode(n *node) *page {
 	p := &page{
 		node:        n,
-		Headline:    "crew",
-		SubHeadline: "Bringing more minimalism and sanity to the web, in a suckless way",
+		Headline:    *siteName,
+		SubHeadline: *siteSubtitle,
 	}
 	p.Title = n.title
 	return p
