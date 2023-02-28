@@ -111,11 +111,13 @@ type node struct {
 	title    string
 	desc     string
 	isDir    bool
+	isHidden bool
 }
 
 type nodeConf struct {
-	Title string `json:"title'"`
-	Desc  string `json:"desc"`
+	Title    string `json:"title'"`
+	Desc     string `json:"desc"`
+	IsHidden bool   `json:"hidden"`
 }
 
 func (n *node) URL() string {
@@ -148,13 +150,13 @@ func (n *node) getSubNodes() ([]*node, error) {
 	// create the nodes
 	var ns []*node
 	for _, f := range files {
-		node, err := newNodeFromPath(path.Join(n.filepath, f.Name()))
-		if err != nil {
-			return nil, err
-		}
 		// skip hidden/meta files
 		if strings.HasPrefix(f.Name(), "_") || strings.HasPrefix(f.Name(), ".") {
 			continue
+		}
+		node, err := newNodeFromPath(path.Join(n.filepath, f.Name()))
+		if err != nil {
+			return nil, err
 		}
 		ns = append(ns, node)
 	}
@@ -225,6 +227,9 @@ func nodeTree(wr io.Writer, root *node, prefix string) {
 		wr.Write([]byte(prefix + "<ul>"))
 	}
 	for _, n := range subnodes {
+		if n.isHidden {
+			continue
+		}
 		if n.isDir {
 			wr.Write([]byte("<li><a href=\"" + n.URL() + "/\">" + n.title + "/</a> " + n.desc + "</li>"))
 		} else {
@@ -241,6 +246,9 @@ func nodesToHTML(ns []*node) []byte {
 	var buf bytes.Buffer
 	buf.WriteString("<ul>")
 	for _, n := range ns {
+		if n.isHidden {
+			continue
+		}
 		buf.WriteString("<li>")
 		if n.isDir {
 			buf.WriteString("<a href=\"" + n.URL() + "/\">" + n.title + "/</a> " + n.desc)
@@ -305,35 +313,43 @@ func newNodeFromPath(fullname string) (*node, error) {
 	title = strings.Replace(title, "_", " ", -1)
 	// node desc
 	desc := ""
+	cfgPath := ""
+	hidden := false
 	// if there's a config file, load config
 	if !info.IsDir() {
 		dir, fn := path.Split(fpath)
-		cfgPath := path.Join(dir, "_"+fn+".conf.json")
-		if fileExists(cfgPath) {
-			data, err := ioutil.ReadFile(cfgPath)
-			if err != nil {
-				return nil, err
-			}
-			var cfg nodeConf
-			err = json.Unmarshal(data, &cfg)
-			if err != nil {
-				return nil, err
-			}
-			if len(cfg.Title) > 0 {
-				title = cfg.Title
-			}
-			if len(cfg.Desc) > 0 {
-				desc = cfg.Desc
-			}
-		}
+		cfgPath = path.Join(dir, "_"+fn+".conf.json")
+
 	} else {
-		// TODO dir config
+		// read the config file
+		cfgPath = path.Join(fpath, "_.conf.json")
+	}
+	if fileExists(cfgPath) {
+		data, err := ioutil.ReadFile(cfgPath)
+		if err != nil {
+			return nil, err
+		}
+		var cfg nodeConf
+		err = json.Unmarshal(data, &cfg)
+		if err != nil {
+			return nil, err
+		}
+		if len(cfg.Title) > 0 {
+			title = cfg.Title
+		}
+		if len(cfg.Desc) > 0 {
+			desc = cfg.Desc
+		}
+		if cfg.IsHidden {
+			hidden = true
+		}
 	}
 
 	return &node{
 		filepath: fpath,
 		title:    title,
 		desc:     desc,
+		isHidden: hidden,
 		isDir:    info.IsDir(),
 	}, nil
 }
@@ -413,6 +429,9 @@ func printList(from *node, to *node) (string, error) {
 		return "", err
 	}
 	for _, n := range subnodes {
+		if n.isHidden {
+			continue
+		}
 		buf.WriteString("<li>")
 		title := n.title
 		if n.isDir {
