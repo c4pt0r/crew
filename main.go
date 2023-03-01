@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -17,12 +18,15 @@ import (
 
 	"github.com/c4pt0r/log"
 	"github.com/gomarkdown/markdown"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var (
 	// rootDir is the root directory of the website.
 	rootDir = flag.String("rootDir", "./site", "root directory")
 
+	// sqlitePath
+	sqlitePath   = flag.String("storage", "./.site.db", "sqlite path")
 	siteName     = flag.String("sitename", "crew", "site name")
 	siteSubtitle = flag.String("site-subtitle", "Bringing more minimalism and sanity to the web, in a suckless way", "site name")
 
@@ -103,21 +107,38 @@ func init() {
 		// this should never happen
 		log.Fatal(err)
 	}
+
+	// create the database
+	globalStorage, err = newSqliteStorage(*sqlitePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func GetStorage() Storage {
+	return globalStorage
 }
 
 type node struct {
 	// filepath is the absolute path to the file
 	filepath string
+	// key is the key to the node in the database
+	key      string
 	title    string
 	desc     string
 	isDir    bool
 	isHidden bool
+	tp       string
 }
 
 type nodeConf struct {
 	Title    string `json:"title'"`
 	Desc     string `json:"desc"`
 	IsHidden bool   `json:"hidden"`
+	// Type is the type of the node, it can be "file" or "kv"
+	Tp string `json:"type"`
+	// Key is the key to the node in the database if the node type is "kv", default value is the node filepath
+	Key string `json:"key"`
 }
 
 func (n *node) URL() string {
@@ -315,6 +336,8 @@ func newNodeFromPath(fullname string) (*node, error) {
 	desc := ""
 	cfgPath := ""
 	hidden := false
+	tp := "file"
+	key := ""
 	// if there's a config file, load config
 	if !info.IsDir() {
 		dir, fn := path.Split(fpath)
@@ -343,6 +366,12 @@ func newNodeFromPath(fullname string) (*node, error) {
 		if cfg.IsHidden {
 			hidden = true
 		}
+		if len(cfg.Tp) > 0 {
+			tp = cfg.Tp
+			if cfg.Tp == "kv" && cfg.Key != "" {
+				key = cfg.Key
+			}
+		}
 	}
 
 	return &node{
@@ -351,6 +380,8 @@ func newNodeFromPath(fullname string) (*node, error) {
 		desc:     desc,
 		isHidden: hidden,
 		isDir:    info.IsDir(),
+		tp:       tp,
+		key:      key,
 	}, nil
 }
 
@@ -382,13 +413,75 @@ type page struct {
 	bodyRender func(p *page, params map[string]string) ([]byte, error)
 }
 
+type Storage interface {
+	Get(key string) ([]byte, error)
+	Put(key string, val []byte) error
+	Del(key string) error
+}
+
+// SqliteStorage is a storage that uses sqlite as backend
+type SqliteStorage struct {
+	db *sql.DB
+}
+
+func newSqliteStorage(dbPath string) (Storage, error) {
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS storage (key TEXT PRIMARY KEY, val TEXT)")
+	if err != nil {
+		return nil, err
+	}
+	return &SqliteStorage{
+		db: db,
+	}, nil
+}
+
+func (s *SqliteStorage) Get(key string) ([]byte, error) {
+	var val string
+	err := s.db.QueryRow("SELECT val FROM storage WHERE key = ?", key).Scan(&val)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(val), nil
+}
+
+func (s *SqliteStorage) Put(key string, val []byte) error {
+	_, err := s.db.Exec("INSERT OR REPLACE INTO storage (key, val) VALUES (?, ?)", key, string(val))
+	return err
+}
+
+func (s *SqliteStorage) Del(key string) error {
+	_, err := s.db.Exec("DELETE FROM storage WHERE key = ?", key)
+	return err
+}
+
+var globalStorage Storage
+
 func pageFromNode(n *node) *page {
 	p := &page{
 		node:        n,
 		Headline:    *siteName,
 		SubHeadline: *siteSubtitle,
+		tp:          n.tp,
 	}
 	p.Title = n.title
+	if p.tp == "kv" {
+		p.bodyRender = func(p *page, params map[string]string) ([]byte, error) {
+			// TODO use params to render the page, not used yet
+			key := n.filepath
+			if len(n.key) > 0 {
+				key = n.key
+			}
+			log.I("get kv store for key:", key)
+			v, err := GetStorage().Get(key)
+			if err != nil {
+				return []byte("error: " + err.Error()), nil
+			}
+			return v, nil
+		}
+	}
 	return p
 }
 
@@ -402,7 +495,6 @@ func sitemapPage() *page {
 	}
 	return p
 }
-
 func filterNode(ns []*node, f func(*node) bool) []*node {
 	var filtered []*node
 	for _, n := range ns {
