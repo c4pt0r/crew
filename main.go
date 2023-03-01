@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -24,17 +25,15 @@ import (
 var (
 	// rootDir is the root directory of the website.
 	rootDir = flag.String("rootDir", "./site", "root directory")
-
 	// sqlitePath
-	sqlitePath      = flag.String("storage", "./.site.db", "sqlite path")
-	siteName        = flag.String("sitename", "crew", "site name")
-	siteSubtitle    = flag.String("site-subtitle", "Bringing more minimalism and sanity to the web, in a suckless way", "site name")
+	sqlitePath   = flag.String("storage", "./.site.db", "sqlite path")
+	siteName     = flag.String("sitename", "crew", "site name")
+	siteSubtitle = flag.String("site-subtitle", "Bringing more minimalism and sanity to the web, in a suckless way", "site name")
+	// customPageTpl is the path to a custom page template.
 	customPageTpl   = flag.String("page-tpl", "", "custom page template file, use -print-page-tpl to print the default template")
 	printDefaultTpl = flag.Bool("print-default-page-template", false, "print the default page template")
-
 	// _rootDir is the absolute path to the root directory
 	_rootDir string
-
 	// addr is the address to listen on.
 	addr = flag.String("addr", ":8080", "address to listen on")
 )
@@ -106,12 +105,11 @@ func init() {
 	_rootDir = *rootDir
 	_rootNode, err = newNodeFromPath(_rootDir)
 	if err != nil {
-		// this should never happen
 		log.Fatal(err)
 	}
 
 	// create the database
-	globalStorage, err = newSqliteStorage(*sqlitePath)
+	_globalStorage, err = newSqliteStorage(*sqlitePath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -126,8 +124,39 @@ func init() {
 	}
 }
 
-func GetStorage() Storage {
-	return globalStorage
+type NodeType int
+
+const (
+	// NodeTypeFile is a file node.
+	NodeTypeFile NodeType = iota
+	NodeTypeKV
+	NodeTypeRPC
+)
+
+func (ntp NodeType) String() string {
+	switch ntp {
+	case NodeTypeFile:
+		return "file"
+	case NodeTypeKV:
+		return "kv"
+	case NodeTypeRPC:
+		return "rpc"
+	default:
+		return "unknown"
+	}
+}
+
+func NodeTypeFromStr(s string) NodeType {
+	switch s {
+	case "file":
+		return NodeTypeFile
+	case "kv":
+		return NodeTypeKV
+	case "rpc":
+		return NodeTypeRPC
+	default:
+		return NodeTypeFile
+	}
 }
 
 type node struct {
@@ -139,7 +168,7 @@ type node struct {
 	desc     string
 	isDir    bool
 	isHidden bool
-	tp       string
+	tp       NodeType
 }
 
 type nodeConf struct {
@@ -148,7 +177,7 @@ type nodeConf struct {
 	IsHidden bool   `json:"hidden"`
 	// Type is the type of the node, it can be "file" or "kv"
 	Tp string `json:"type"`
-	// Key is the key to the node in the database if the node type is "kv", default value is the node filepath
+	// Key is the key to the node in the database if the node type is "kv", default value is the node URL
 	Key string `json:"key"`
 }
 
@@ -219,20 +248,20 @@ func (n *node) ext() string {
 	return filepath.Ext(n.filepath)
 }
 
-func (n *node) render() ([]byte, error) {
+func (n *node) render(ctx context.Context) ([]byte, error) {
 	if n.isDir {
-		return n.renderDir()
+		return n.renderDir(ctx)
 	}
 	if n.ext() == ".md" {
-		return n.renderMarkdown()
+		return n.renderMarkdown(ctx)
 	} else if n.ext() == ".html" {
-		return n.renderHTML()
+		return n.renderHTML(ctx)
 	} else {
 		return nil, fmt.Errorf("unknown file extension %q", n.ext())
 	}
 }
 
-func (n *node) renderMarkdown() ([]byte, error) {
+func (n *node) renderMarkdown(ctx context.Context) ([]byte, error) {
 	filePath := n.filepath
 	content, err := ioutil.ReadFile(filePath)
 	if err != nil {
@@ -243,7 +272,7 @@ func (n *node) renderMarkdown() ([]byte, error) {
 	return output, nil
 }
 
-func (n *node) renderHTML() ([]byte, error) {
+func (n *node) renderHTML(ctx context.Context) ([]byte, error) {
 	filePath := n.filepath
 	content, err := ioutil.ReadFile(filePath)
 	if err != nil {
@@ -293,7 +322,7 @@ func nodesToHTML(ns []*node) []byte {
 	return buf.Bytes()
 }
 
-func (n *node) renderDir() ([]byte, error) {
+func (n *node) renderDir(ctx context.Context) ([]byte, error) {
 	// if there's _index.md or _index.html, render that
 	indexFile := path.Join(n.filepath, "_index.md")
 	if fileExists(indexFile) {
@@ -301,7 +330,7 @@ func (n *node) renderDir() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		return indexNode.render()
+		return indexNode.render(ctx)
 	}
 	// get the sub nodes
 	subNodes, err := n.getSubNodes()
@@ -391,7 +420,7 @@ func newNodeFromPath(fullname string) (*node, error) {
 		desc:     desc,
 		isHidden: hidden,
 		isDir:    info.IsDir(),
-		tp:       tp,
+		tp:       NodeTypeFromStr(tp),
 		key:      key,
 	}, nil
 }
@@ -409,7 +438,6 @@ func newNodeFromPath(fullname string) (*node, error) {
 // +------------------------+
 type page struct {
 	node *node
-	tp   string
 	// for the template
 	Header      string
 	Headline    string
@@ -421,7 +449,7 @@ type page struct {
 	Vals        map[string]string
 
 	// for different type
-	bodyRender func(p *page, params map[string]string) ([]byte, error)
+	bodyRender func(p *page, ctx context.Context) ([]byte, error)
 }
 
 type Storage interface {
@@ -468,25 +496,28 @@ func (s *SqliteStorage) Del(key string) error {
 	return err
 }
 
-var globalStorage Storage
+var _globalStorage Storage
+
+func getStorage() Storage {
+	return _globalStorage
+
+}
 
 func pageFromNode(n *node) *page {
 	p := &page{
 		node:        n,
 		Headline:    *siteName,
 		SubHeadline: *siteSubtitle,
-		tp:          n.tp,
 	}
 	p.Title = n.title
-	if p.tp == "kv" {
-		p.bodyRender = func(p *page, params map[string]string) ([]byte, error) {
-			// TODO use params to render the page, not used yet
-			key := n.filepath
+	if p.node.tp == NodeTypeKV {
+		p.bodyRender = func(p *page, ctx context.Context) ([]byte, error) {
+			key := n.URL()
 			if len(n.key) > 0 {
 				key = n.key
 			}
 			log.I("get kv store for key:", key)
-			v, err := GetStorage().Get(key)
+			v, err := getStorage().Get(key)
 			if err != nil {
 				return []byte("error: " + err.Error()), nil
 			}
@@ -498,7 +529,7 @@ func pageFromNode(n *node) *page {
 
 func sitemapPage() *page {
 	p := pageFromNode(_rootNode)
-	p.bodyRender = func(p *page, params map[string]string) ([]byte, error) {
+	p.bodyRender = func(p *page, ctx context.Context) ([]byte, error) {
 		var buf bytes.Buffer
 		buf.WriteString("<h1> Site map </h1>")
 		nodeTree(&buf, p.node, "")
@@ -581,7 +612,7 @@ func (p *page) renderNav() ([]byte, error) {
 	return []byte(out), nil
 }
 
-func (p *page) render() ([]byte, error) {
+func (p *page) render(ctx context.Context) ([]byte, error) {
 	tpl, err := template.New("page").Parse(pageTpl)
 	if err != nil {
 		return nil, err
@@ -590,12 +621,12 @@ func (p *page) render() ([]byte, error) {
 	// get the body
 	var body []byte
 	if p.bodyRender == nil {
-		body, err = p.node.render()
+		body, err = p.node.render(ctx)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		body, err = p.bodyRender(p, nil)
+		body, err = p.bodyRender(p, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -625,6 +656,15 @@ func serverStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	// serve the file
 	http.ServeFile(w, r, filepath)
+}
+
+// get query params from http.Request
+func getQueryParams(r *http.Request) map[string]string {
+	params := make(map[string]string)
+	for k, v := range r.URL.Query() {
+		params[k] = v[0]
+	}
+	return params
 }
 
 func httpServer(addr string) error {
@@ -661,7 +701,8 @@ func httpServer(addr string) error {
 			// render the node
 			page = pageFromNode(node)
 		}
-		content, err := page.render()
+		ctx := context.WithValue(context.Background(), "params", getQueryParams(r))
+		content, err := page.render(ctx)
 		if err != nil {
 			log.E(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
