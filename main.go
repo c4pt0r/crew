@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/rpc/jsonrpc"
 	"os"
 	"path"
 	"path/filepath"
@@ -93,6 +94,95 @@ var (
 `
 )
 
+/* Storage implentation of the Storage interface using sqlite3 as the backend. */
+type Storage interface {
+	Get(key string) ([]byte, error)
+	Put(key string, val []byte) error
+	Del(key string) error
+}
+
+// SqliteStorage is a storage that uses sqlite as backend
+type SqliteStorage struct {
+	db *sql.DB
+}
+
+func newSqliteStorage(dbPath string) (Storage, error) {
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS storage (key TEXT PRIMARY KEY, val TEXT)")
+	if err != nil {
+		return nil, err
+	}
+	return &SqliteStorage{
+		db: db,
+	}, nil
+}
+
+func (s *SqliteStorage) Get(key string) ([]byte, error) {
+	var val string
+	err := s.db.QueryRow("SELECT val FROM storage WHERE key = ?", key).Scan(&val)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(val), nil
+}
+
+func (s *SqliteStorage) Put(key string, val []byte) error {
+	_, err := s.db.Exec("INSERT OR REPLACE INTO storage (key, val) VALUES (?, ?)", key, string(val))
+	return err
+}
+
+func (s *SqliteStorage) Del(key string) error {
+	_, err := s.db.Exec("DELETE FROM storage WHERE key = ?", key)
+	return err
+}
+
+var _globalStorage Storage
+
+func getStorage() Storage {
+	return _globalStorage
+}
+
+/* End of storage implementation */
+
+/* RPC helper functions */
+
+type RpcRender interface {
+	Render(url string, params map[string]string) ([]byte, error)
+}
+
+type JsonRPCRender struct {
+	addr string
+}
+
+func NewJsonRPCRender(addr string) *JsonRPCRender {
+	return &JsonRPCRender{
+		addr: addr,
+	}
+}
+
+func (r *JsonRPCRender) Render(url string, params map[string]string) ([]byte, error) {
+	client, err := jsonrpc.Dial("tcp", r.addr)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	var resp string
+	err = client.Call("Render", map[string]interface{}{
+		"url":    url,
+		"params": params,
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(resp), nil
+}
+
+/* End of RPC Helper functions */
+
 var (
 	// for render navbar & sitemap
 	_rootNode *node
@@ -163,12 +253,14 @@ type node struct {
 	// filepath is the absolute path to the file
 	filepath string
 	// key is the key to the node in the database
-	key      string
-	title    string
-	desc     string
-	isDir    bool
-	isHidden bool
-	tp       NodeType
+	key string
+	// rpcEndpoint is the endpoint to the rpc server
+	rpcEndpoint string
+	title       string
+	desc        string
+	isDir       bool
+	isHidden    bool
+	tp          NodeType
 }
 
 type nodeConf struct {
@@ -179,6 +271,8 @@ type nodeConf struct {
 	Tp string `json:"type"`
 	// Key is the key to the node in the database if the node type is "kv", default value is the node URL
 	Key string `json:"key"`
+	// RpcEndpoint is the endpoint of the JsonRPC server if the node type is "rpc", default value is the node URL
+	RpcEndpoint string `json:"rpc_endpoint"`
 }
 
 func (n *node) URL() string {
@@ -248,7 +342,7 @@ func (n *node) ext() string {
 	return filepath.Ext(n.filepath)
 }
 
-func (n *node) render(ctx context.Context) ([]byte, error) {
+func (n *node) Render(ctx context.Context) ([]byte, error) {
 	if n.isDir {
 		return n.renderDir(ctx)
 	}
@@ -303,10 +397,25 @@ func nodeTree(wr io.Writer, root *node, prefix string) {
 	}
 }
 
-func nodesToHTML(ns []*node) []byte {
+func (n *node) renderDir(ctx context.Context) ([]byte, error) {
+	// if there's _index.md or _index.html, render that
+	indexFile := path.Join(n.filepath, "_index.md")
+	if fileExists(indexFile) {
+		indexNode, err := newNodeFromPath(indexFile)
+		if err != nil {
+			return nil, err
+		}
+		return indexNode.Render(ctx)
+	}
+	// get the sub nodes
+	subNodes, err := n.getSubNodes()
+	if err != nil {
+		return nil, err
+	}
 	var buf bytes.Buffer
+	buf.WriteString("<h1>" + n.URL() + "</h1>")
 	buf.WriteString("<ul>")
-	for _, n := range ns {
+	for _, n := range subNodes {
 		if n.isHidden {
 			continue
 		}
@@ -319,27 +428,6 @@ func nodesToHTML(ns []*node) []byte {
 		buf.WriteString("</li>")
 	}
 	buf.WriteString("</ul>")
-	return buf.Bytes()
-}
-
-func (n *node) renderDir(ctx context.Context) ([]byte, error) {
-	// if there's _index.md or _index.html, render that
-	indexFile := path.Join(n.filepath, "_index.md")
-	if fileExists(indexFile) {
-		indexNode, err := newNodeFromPath(indexFile)
-		if err != nil {
-			return nil, err
-		}
-		return indexNode.render(ctx)
-	}
-	// get the sub nodes
-	subNodes, err := n.getSubNodes()
-	if err != nil {
-		return nil, err
-	}
-	var buf bytes.Buffer
-	buf.WriteString("<h1>" + n.URL() + "</h1>")
-	buf.Write(nodesToHTML(subNodes))
 	return buf.Bytes(), nil
 }
 
@@ -378,6 +466,7 @@ func newNodeFromPath(fullname string) (*node, error) {
 	hidden := false
 	tp := "file"
 	key := ""
+	rpcEndpoint := ""
 	// if there's a config file, load config
 	if !info.IsDir() {
 		dir, fn := path.Split(fpath)
@@ -408,20 +497,23 @@ func newNodeFromPath(fullname string) (*node, error) {
 		}
 		if len(cfg.Tp) > 0 {
 			tp = cfg.Tp
-			if cfg.Tp == "kv" && cfg.Key != "" {
+			if cfg.Tp == NodeTypeKV.String() && cfg.Key != "" {
 				key = cfg.Key
+			}
+			if cfg.Tp == NodeTypeRPC.String() && cfg.RpcEndpoint != "" {
+				rpcEndpoint = cfg.RpcEndpoint
 			}
 		}
 	}
-
 	return &node{
-		filepath: fpath,
-		title:    title,
-		desc:     desc,
-		isHidden: hidden,
-		isDir:    info.IsDir(),
-		tp:       NodeTypeFromStr(tp),
-		key:      key,
+		filepath:    fpath,
+		title:       title,
+		desc:        desc,
+		isHidden:    hidden,
+		isDir:       info.IsDir(),
+		tp:          NodeTypeFromStr(tp),
+		key:         key,
+		rpcEndpoint: rpcEndpoint,
 	}, nil
 }
 
@@ -452,57 +544,6 @@ type page struct {
 	bodyRender func(p *page, ctx context.Context) ([]byte, error)
 }
 
-type Storage interface {
-	Get(key string) ([]byte, error)
-	Put(key string, val []byte) error
-	Del(key string) error
-}
-
-// SqliteStorage is a storage that uses sqlite as backend
-type SqliteStorage struct {
-	db *sql.DB
-}
-
-func newSqliteStorage(dbPath string) (Storage, error) {
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		return nil, err
-	}
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS storage (key TEXT PRIMARY KEY, val TEXT)")
-	if err != nil {
-		return nil, err
-	}
-	return &SqliteStorage{
-		db: db,
-	}, nil
-}
-
-func (s *SqliteStorage) Get(key string) ([]byte, error) {
-	var val string
-	err := s.db.QueryRow("SELECT val FROM storage WHERE key = ?", key).Scan(&val)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(val), nil
-}
-
-func (s *SqliteStorage) Put(key string, val []byte) error {
-	_, err := s.db.Exec("INSERT OR REPLACE INTO storage (key, val) VALUES (?, ?)", key, string(val))
-	return err
-}
-
-func (s *SqliteStorage) Del(key string) error {
-	_, err := s.db.Exec("DELETE FROM storage WHERE key = ?", key)
-	return err
-}
-
-var _globalStorage Storage
-
-func getStorage() Storage {
-	return _globalStorage
-
-}
-
 func pageFromNode(n *node) *page {
 	p := &page{
 		node:        n,
@@ -522,6 +563,15 @@ func pageFromNode(n *node) *page {
 				return []byte("error: " + err.Error()), nil
 			}
 			return v, nil
+		}
+	}
+	if p.node.tp == NodeTypeRPC {
+		p.bodyRender = func(p *page, ctx context.Context) ([]byte, error) {
+			endpoint := p.node.rpcEndpoint
+			log.D("get rpc endpoint:", endpoint)
+			remoteRender := NewJsonRPCRender(endpoint)
+			params := ctx.Value("params").(map[string]string)
+			return remoteRender.Render(p.node.URL(), params)
 		}
 	}
 	return p
@@ -612,7 +662,7 @@ func (p *page) renderNav() ([]byte, error) {
 	return []byte(out), nil
 }
 
-func (p *page) render(ctx context.Context) ([]byte, error) {
+func (p *page) Render(ctx context.Context) ([]byte, error) {
 	tpl, err := template.New("page").Parse(pageTpl)
 	if err != nil {
 		return nil, err
@@ -621,7 +671,7 @@ func (p *page) render(ctx context.Context) ([]byte, error) {
 	// get the body
 	var body []byte
 	if p.bodyRender == nil {
-		body, err = p.node.render(ctx)
+		body, err = p.node.Render(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -702,7 +752,7 @@ func httpServer(addr string) error {
 			page = pageFromNode(node)
 		}
 		ctx := context.WithValue(context.Background(), "params", getQueryParams(r))
-		content, err := page.render(ctx)
+		content, err := page.Render(ctx)
 		if err != nil {
 			log.E(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
