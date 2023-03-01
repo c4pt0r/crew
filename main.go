@@ -26,9 +26,11 @@ var (
 	rootDir = flag.String("rootDir", "./site", "root directory")
 
 	// sqlitePath
-	sqlitePath   = flag.String("storage", "./.site.db", "sqlite path")
-	siteName     = flag.String("sitename", "crew", "site name")
-	siteSubtitle = flag.String("site-subtitle", "Bringing more minimalism and sanity to the web, in a suckless way", "site name")
+	sqlitePath      = flag.String("storage", "./.site.db", "sqlite path")
+	siteName        = flag.String("sitename", "crew", "site name")
+	siteSubtitle    = flag.String("site-subtitle", "Bringing more minimalism and sanity to the web, in a suckless way", "site name")
+	customPageTpl   = flag.String("page-tpl", "", "custom page template file, use -print-page-tpl to print the default template")
+	printDefaultTpl = flag.Bool("print-default-page-template", false, "print the default page template")
 
 	// _rootDir is the absolute path to the root directory
 	_rootDir string
@@ -37,7 +39,7 @@ var (
 	addr = flag.String("addr", ":8080", "address to listen on")
 )
 
-const (
+var (
 	pageTpl = `<!DOCTYPE html>
 <html>
 <head>
@@ -112,6 +114,15 @@ func init() {
 	globalStorage, err = newSqliteStorage(*sqlitePath)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if *customPageTpl != "" {
+		// read template file and replace pageTpl
+		b, err := ioutil.ReadFile(*customPageTpl)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pageTpl = string(b)
 	}
 }
 
@@ -663,5 +674,9 @@ func httpServer(addr string) error {
 }
 
 func main() {
+	if *printDefaultTpl {
+		fmt.Print(pageTpl)
+		return
+	}
 	log.Fatal(httpServer(*addr))
 }
