@@ -201,6 +201,18 @@ func (n *node) URL() string {
 	return relPath
 }
 
+func isReservedName(name string) bool {
+	if strings.HasPrefix(name, ".") ||
+		strings.HasPrefix(name, "_") ||
+		strings.HasSuffix(name, ".conf.json") ||
+		name == "index.html" ||
+		name == "index.md" {
+		return true
+	}
+	return false
+
+}
+
 func (n *node) getSubNodes() ([]*node, error) {
 	// get the files in the directory
 	if !n.isDir {
@@ -214,7 +226,7 @@ func (n *node) getSubNodes() ([]*node, error) {
 	var ns []*node
 	for _, f := range files {
 		// skip hidden/meta files
-		if strings.HasPrefix(f.Name(), "_") || strings.HasPrefix(f.Name(), ".") {
+		if isReservedName(f.Name()) {
 			continue
 		}
 		node, err := newNodeFromPath(path.Join(n.filepath, f.Name()))
@@ -259,7 +271,8 @@ func (n *node) Render(ctx context.Context) ([]byte, error) {
 	} else if n.ext() == ".html" {
 		return n.renderHTML(ctx)
 	} else {
-		return nil, fmt.Errorf("unknown file extension %q", n.ext())
+		// TODO render other types of files
+		return n.renderHTML(ctx)
 	}
 }
 
@@ -285,7 +298,6 @@ func (n *node) renderHTML(ctx context.Context) ([]byte, error) {
 
 func nodeTree(wr io.Writer, root *node, prefix string) {
 	subnodes, _ := root.getSubNodes()
-
 	if len(subnodes) > 0 {
 		wr.Write([]byte(prefix + "<ul>"))
 	}
@@ -305,14 +317,21 @@ func nodeTree(wr io.Writer, root *node, prefix string) {
 	}
 }
 
+func getIndexNodeForDir(dir string) (*node, error) {
+	htmlIndex := path.Join(dir, "index.html")
+	if fileExists(htmlIndex) {
+		return newNodeFromPath(htmlIndex)
+	}
+	mdIndex := path.Join(dir, "index.md")
+	if fileExists(mdIndex) {
+		return newNodeFromPath(mdIndex)
+	}
+	return nil, nil
+}
+
 func (n *node) renderDir(ctx context.Context) ([]byte, error) {
 	// if there's _index.md or _index.html, render that
-	indexFile := path.Join(n.filepath, "_index.md")
-	if fileExists(indexFile) {
-		indexNode, err := newNodeFromPath(indexFile)
-		if err != nil {
-			return nil, err
-		}
+	if indexNode, err := getIndexNodeForDir(n.filepath); err == nil && indexNode != nil {
 		return indexNode.Render(ctx)
 	}
 	// get the sub nodes
@@ -357,32 +376,40 @@ func fileExists(fpath string) bool {
 	return true
 }
 
+func getConfigFileForFile(fpath string) (bool, string, error) {
+	cfgPath := ""
+	info, err := os.Stat(fpath)
+	if err != nil {
+		return false, "", err
+	}
+	if !info.IsDir() {
+		dir, fn := path.Split(fpath)
+		cfgPath = path.Join(dir, fn+".conf.json")
+		return false, cfgPath, nil
+
+	} else {
+		cfgPath = path.Join(fpath, ".conf.json")
+		return true, cfgPath, nil
+	}
+}
+
 func newNodeFromPath(fullname string) (*node, error) {
 	fpath := fullname
 	// check if is a directory
-	info, err := os.Stat(fpath)
-	if err != nil {
-		return nil, err
-	}
 	fname := filepath.Base(fpath)
 	title := strings.TrimSuffix(fname, filepath.Ext(fname))
 	// replace underscores with spaces
 	title = strings.Replace(title, "_", " ", -1)
 	// node desc
 	desc := ""
-	cfgPath := ""
 	hidden := false
 	tp := "file"
 	key := ""
 	rpcEndpoint := ""
-	// if there's a config file, load config
-	if !info.IsDir() {
-		dir, fn := path.Split(fpath)
-		cfgPath = path.Join(dir, "_"+fn+".conf.json")
 
-	} else {
-		// read the config file
-		cfgPath = path.Join(fpath, "_.conf.json")
+	isDir, cfgPath, err := getConfigFileForFile(fpath)
+	if err != nil {
+		return nil, err
 	}
 	if fileExists(cfgPath) {
 		data, err := ioutil.ReadFile(cfgPath)
@@ -418,7 +445,7 @@ func newNodeFromPath(fullname string) (*node, error) {
 		title:       title,
 		desc:        desc,
 		isHidden:    hidden,
-		isDir:       info.IsDir(),
+		isDir:       isDir,
 		tp:          NodeTypeFromStr(tp),
 		key:         key,
 		rpcEndpoint: rpcEndpoint,
