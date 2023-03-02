@@ -18,7 +18,6 @@ import (
 
 	"github.com/c4pt0r/log"
 	"github.com/gomarkdown/markdown"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 var (

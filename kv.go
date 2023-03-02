@@ -3,7 +3,7 @@ package main
 import (
 	"database/sql"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/glebarez/go-sqlite"
 )
 
 /* Storage implentation of the Storage interface using sqlite3 as the backend. */
@@ -19,7 +19,7 @@ type SqliteStorage struct {
 }
 
 func NewSqliteStorage(dbPath string) (Storage, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}
