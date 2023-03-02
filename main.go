@@ -3,14 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
-	"net/rpc/jsonrpc"
 	"os"
 	"path"
 	"path/filepath"
@@ -93,96 +91,6 @@ var (
 </body></html>
 `
 )
-
-/* Storage implentation of the Storage interface using sqlite3 as the backend. */
-type Storage interface {
-	Get(key string) ([]byte, error)
-	Put(key string, val []byte) error
-	Del(key string) error
-}
-
-// SqliteStorage is a storage that uses sqlite as backend
-type SqliteStorage struct {
-	db *sql.DB
-}
-
-func newSqliteStorage(dbPath string) (Storage, error) {
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		return nil, err
-	}
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS storage (key TEXT PRIMARY KEY, val TEXT)")
-	if err != nil {
-		return nil, err
-	}
-	return &SqliteStorage{
-		db: db,
-	}, nil
-}
-
-func (s *SqliteStorage) Get(key string) ([]byte, error) {
-	var val string
-	err := s.db.QueryRow("SELECT val FROM storage WHERE key = ?", key).Scan(&val)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(val), nil
-}
-
-func (s *SqliteStorage) Put(key string, val []byte) error {
-	_, err := s.db.Exec("INSERT OR REPLACE INTO storage (key, val) VALUES (?, ?)", key, string(val))
-	return err
-}
-
-func (s *SqliteStorage) Del(key string) error {
-	_, err := s.db.Exec("DELETE FROM storage WHERE key = ?", key)
-	return err
-}
-
-var _globalStorage Storage
-
-func getStorage() Storage {
-	return _globalStorage
-}
-
-/* End of storage implementation */
-
-/* RPC helper functions */
-
-type RpcRender interface {
-	Render(url string, params map[string]string) ([]byte, error)
-}
-
-type JsonRPCRender struct {
-	addr string
-}
-
-func NewJsonRPCRender(addr string) *JsonRPCRender {
-	return &JsonRPCRender{
-		addr: addr,
-	}
-}
-
-func (r *JsonRPCRender) Render(url string, params map[string]string) ([]byte, error) {
-	client, err := jsonrpc.Dial("tcp", r.addr)
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
-
-	var resp string
-	err = client.Call("Render", map[string]interface{}{
-		"url":    url,
-		"params": params,
-	}, &resp)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(resp), nil
-}
-
-/* End of RPC Helper functions */
-
 var (
 	// for render navbar & sitemap
 	_rootNode *node
@@ -199,7 +107,7 @@ func init() {
 	}
 
 	// create the database
-	_globalStorage, err = newSqliteStorage(*sqlitePath)
+	_globalStorage, err = NewSqliteStorage(*sqlitePath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -544,6 +452,27 @@ type page struct {
 	bodyRender func(p *page, ctx context.Context) ([]byte, error)
 }
 
+func kvPageRender(p *page, ctx context.Context) ([]byte, error) {
+	key := p.node.URL()
+	if len(p.node.key) > 0 {
+		key = p.node.key
+	}
+	log.I("get kv store for key:", key)
+	v, err := GetStorage().Get(key)
+	if err != nil {
+		return []byte("error: " + err.Error()), nil
+	}
+	return v, nil
+}
+
+func rpcPageRender(p *page, ctx context.Context) ([]byte, error) {
+	endpoint := p.node.rpcEndpoint
+	log.D("get rpc endpoint:", endpoint)
+	remoteRender := NewJsonRPCRender(endpoint)
+	params := ctx.Value("params").(map[string]string)
+	return remoteRender.Render(p.node.URL(), params)
+}
+
 func pageFromNode(n *node) *page {
 	p := &page{
 		node:        n,
@@ -551,28 +480,12 @@ func pageFromNode(n *node) *page {
 		SubHeadline: *siteSubtitle,
 	}
 	p.Title = n.title
-	if p.node.tp == NodeTypeKV {
-		p.bodyRender = func(p *page, ctx context.Context) ([]byte, error) {
-			key := n.URL()
-			if len(n.key) > 0 {
-				key = n.key
-			}
-			log.I("get kv store for key:", key)
-			v, err := getStorage().Get(key)
-			if err != nil {
-				return []byte("error: " + err.Error()), nil
-			}
-			return v, nil
-		}
-	}
-	if p.node.tp == NodeTypeRPC {
-		p.bodyRender = func(p *page, ctx context.Context) ([]byte, error) {
-			endpoint := p.node.rpcEndpoint
-			log.D("get rpc endpoint:", endpoint)
-			remoteRender := NewJsonRPCRender(endpoint)
-			params := ctx.Value("params").(map[string]string)
-			return remoteRender.Render(p.node.URL(), params)
-		}
+	switch n.tp {
+	case NodeTypeKV:
+		p.bodyRender = kvPageRender
+	case NodeTypeRPC:
+		p.bodyRender = rpcPageRender
+	default:
 	}
 	return p
 }
@@ -587,6 +500,7 @@ func sitemapPage() *page {
 	}
 	return p
 }
+
 func filterNode(ns []*node, f func(*node) bool) []*node {
 	var filtered []*node
 	for _, n := range ns {
