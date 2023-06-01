@@ -168,6 +168,7 @@ type node struct {
 	isDir       bool
 	isHidden    bool
 	tp          NodeType
+	authToken   string
 }
 
 type nodeConf struct {
@@ -180,6 +181,8 @@ type nodeConf struct {
 	Key string `json:"key"`
 	// RpcEndpoint is the endpoint of the JsonRPC server if the node type is "rpc", default value is the node URL
 	RpcEndpoint string `json:"rpc_endpoint"`
+	// AuthToken is the token to access the node in header
+	AuthToken string `json:"auth_token"`
 }
 
 func (n *node) URL() string {
@@ -420,6 +423,7 @@ func newNodeFromPath(fullname string) (*node, error) {
 	tp := "file"
 	key := ""
 	rpcEndpoint := ""
+	authToken := ""
 
 	isDir, cfgPath, err := getConfigFileForFile(fpath)
 	if err != nil {
@@ -453,6 +457,9 @@ func newNodeFromPath(fullname string) (*node, error) {
 				rpcEndpoint = cfg.RpcEndpoint
 			}
 		}
+		if len(cfg.AuthToken) > 0 {
+			authToken = cfg.AuthToken
+		}
 	}
 	return &node{
 		filepath:    fpath,
@@ -463,6 +470,7 @@ func newNodeFromPath(fullname string) (*node, error) {
 		tp:          NodeTypeFromStr(tp),
 		key:         key,
 		rpcEndpoint: rpcEndpoint,
+		authToken:   authToken,
 	}, nil
 }
 
@@ -710,6 +718,20 @@ func httpServer(addr string) error {
 				return
 			}
 			// render the node
+			if node.authToken != "" {
+				// check http header got the auth token
+				if v := r.Header.Get("Authorization"); len(v) > 0 {
+					// split the Bearer token
+					parts := strings.Split(v, " ")
+					if !(len(parts) == 2 && parts[0] == "Bearer" && parts[1] == node.authToken) {
+						http.Error(w, "Unauthorized", http.StatusUnauthorized)
+						return
+					}
+				} else {
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
+			}
 			page = pageFromNode(node)
 		}
 		ctx := context.WithValue(context.Background(), "params", getQueryParams(r))
