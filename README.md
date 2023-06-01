@@ -8,4 +8,4 @@ it basically is a poor clone of [werc](http://werc.cat-v.org/), go to [http://cr
 Who's using?
 ================
 
-[http://cat.0xffff.me](http://cat.0xffff.me)
+[http://0xffff.me](http://0xffff.me)
