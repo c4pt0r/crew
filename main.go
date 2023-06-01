@@ -209,7 +209,6 @@ func isReservedName(name string) bool {
 		return true
 	}
 	return false
-
 }
 
 func (n *node) getSubNodes() ([]*node, error) {
@@ -287,6 +286,22 @@ func (n *node) renderMarkdown(ctx context.Context) ([]byte, error) {
 }
 
 func (n *node) renderHTML(ctx context.Context) ([]byte, error) {
+	return n.rawContent()
+}
+
+func (n *node) rawContent() ([]byte, error) {
+	// if it's directory, just return index file
+	if n.isDir {
+		n, err := getIndexNodeForDir(n.filepath)
+		if err != nil {
+			return nil, err
+		}
+		if n != nil {
+			return n.rawContent()
+		} else {
+			return nil, fmt.Errorf("no index file (index.html or index.md) found for directory")
+		}
+	}
 	filePath := n.filepath
 	content, err := ioutil.ReadFile(filePath)
 	if err != nil {
@@ -603,6 +618,12 @@ func (p *page) renderNav() ([]byte, error) {
 }
 
 func (p *page) Render(ctx context.Context) ([]byte, error) {
+	// if raw flag is set, just return the raw data
+	if params, ok := ctx.Value("params").(map[string]string); ok {
+		if v, ok := params["raw"]; ok && (v == "true" || v == "1") {
+			return p.node.rawContent()
+		}
+	}
 	tpl, err := template.New("page").Parse(pageTpl)
 	if err != nil {
 		return nil, err
