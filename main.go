@@ -22,9 +22,7 @@ import (
 
 var (
 	// rootDir is the root directory of the website.
-	rootDir = flag.String("rootDir", "./site", "root directory")
-	// sqlitePath
-	sqlitePath   = flag.String("storage", "./.site.db", "sqlite path")
+	rootDir      = flag.String("rootDir", "./site", "root directory")
 	siteName     = flag.String("sitename", "crew", "site name")
 	siteSubtitle = flag.String("site-subtitle", "Bringing more minimalism and sanity to the web, in a suckless way", "site name")
 	// customPageTpl is the path to a custom page template.
@@ -105,12 +103,6 @@ func init() {
 		log.Fatal(err)
 	}
 
-	// create the database
-	_globalStorage, err = NewSqliteStorage(*sqlitePath)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	if *customPageTpl != "" {
 		// read template file and replace pageTpl
 		b, err := ioutil.ReadFile(*customPageTpl)
@@ -126,7 +118,6 @@ type NodeType int
 const (
 	// NodeTypeFile is a file node.
 	NodeTypeFile NodeType = iota
-	NodeTypeKV
 	NodeTypeRPC
 )
 
@@ -134,8 +125,6 @@ func (ntp NodeType) String() string {
 	switch ntp {
 	case NodeTypeFile:
 		return "file"
-	case NodeTypeKV:
-		return "kv"
 	case NodeTypeRPC:
 		return "rpc"
 	default:
@@ -147,8 +136,6 @@ func NodeTypeFromStr(s string) NodeType {
 	switch s {
 	case "file":
 		return NodeTypeFile
-	case "kv":
-		return NodeTypeKV
 	case "rpc":
 		return NodeTypeRPC
 	default:
@@ -450,9 +437,6 @@ func newNodeFromPath(fullname string) (*node, error) {
 		}
 		if len(cfg.Tp) > 0 {
 			tp = cfg.Tp
-			if cfg.Tp == NodeTypeKV.String() && cfg.Key != "" {
-				key = cfg.Key
-			}
 			if cfg.Tp == NodeTypeRPC.String() && cfg.RpcEndpoint != "" {
 				rpcEndpoint = cfg.RpcEndpoint
 			}
@@ -501,19 +485,6 @@ type page struct {
 	bodyRender func(p *page, ctx context.Context) ([]byte, error)
 }
 
-func kvPageRender(p *page, ctx context.Context) ([]byte, error) {
-	key := p.node.URL()
-	if len(p.node.key) > 0 {
-		key = p.node.key
-	}
-	log.I("get kv store for key:", key)
-	v, err := GetStorage().Get(key)
-	if err != nil {
-		return []byte("error: " + err.Error()), nil
-	}
-	return v, nil
-}
-
 func rpcPageRender(p *page, ctx context.Context) ([]byte, error) {
 	endpoint := p.node.rpcEndpoint
 	log.D("get rpc endpoint:", endpoint)
@@ -530,8 +501,6 @@ func pageFromNode(n *node) *page {
 	}
 	p.Title = n.title
 	switch n.tp {
-	case NodeTypeKV:
-		p.bodyRender = kvPageRender
 	case NodeTypeRPC:
 		p.bodyRender = rpcPageRender
 	default:
