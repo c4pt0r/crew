@@ -39,6 +39,12 @@ var (
 <html>
 <head>
     <title>{{ .Title }}</title>
+	<link rel="shortcut icon" href="/_static/favicon.ico" type="image/vnd.microsoft.icon">
+
+	<link rel="stylesheet" href="/_static/highlight.js/default.min.css">
+    <script src="/_static/highlight.js/highlight.min.js"></script>
+    <script>hljs.initHighlightingOnLoad();</script>
+
     <link rel="stylesheet" href="/_static/style.css" type="text/css" media="screen, handheld" title="default">
     <link rel="shortcut icon" href="/_static/favicon.ico" type="image/vnd.microsoft.icon">
     <meta charset="UTF-8">

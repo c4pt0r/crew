@@ -10,3 +10,23 @@ nav ul { display: flex; flex-direction: column; list-style-type: none; list-styl
 nav li ul { padding-left: 0.6em }
 footer { display: flex; justify-content: space-between; }
 
+
+@media (prefers-color-scheme: dark) {
+	body {
+		background-color: #000;
+		color: #bdbdbd;
+	}
+        a {
+		color: #56c8ff;
+	}
+	.hljs {
+		background-color: #000;
+		color: #fff;
+	}
+	.hljs-deletion, .hljs-number, .hljs-quote, .hljs-selector-class, .hljs-selector-id, .hljs-string, .hljs-template-tag, .hljs-type {
+		color: #060;
+	}
+	.hljs-section, .hljs-title {
+		color: #090;
+	}
+}
