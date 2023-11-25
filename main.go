@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
@@ -111,7 +110,7 @@ func init() {
 
 	if *customPageTpl != "" {
 		// read template file and replace pageTpl
-		b, err := ioutil.ReadFile(*customPageTpl)
+		b, err := os.ReadFile(*customPageTpl)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -212,7 +211,7 @@ func (n *node) getSubNodes() ([]*node, error) {
 	if !n.isDir {
 		return nil, nil
 	}
-	files, err := ioutil.ReadDir(n.filepath)
+	files, err := os.ReadDir(n.filepath)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +271,7 @@ func (n *node) Render(ctx context.Context) ([]byte, error) {
 
 func (n *node) renderMarkdown(ctx context.Context) ([]byte, error) {
 	filePath := n.filepath
-	content, err := ioutil.ReadFile(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +298,7 @@ func (n *node) rawContent() ([]byte, error) {
 		}
 	}
 	filePath := n.filepath
-	content, err := ioutil.ReadFile(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +422,7 @@ func newNodeFromPath(fullname string) (*node, error) {
 		return nil, err
 	}
 	if fileExists(cfgPath) {
-		data, err := ioutil.ReadFile(cfgPath)
+		data, err := os.ReadFile(cfgPath)
 		if err != nil {
 			return nil, err
 		}
@@ -662,6 +661,8 @@ func getQueryParams(r *http.Request) map[string]string {
 }
 
 func httpServer(addr string) error {
+	http.HandleFunc("/ws", websocketHandler)
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// get the path from the request, and remove the leading slash
 		var page *page
