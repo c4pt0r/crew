@@ -130,7 +130,7 @@ var (
 		},
 		"buildindex": func(ctx context.Context, cmd string, params []string) error {
 			ac := GetAdminConnContext(ctx)
-			ac.send("buildindex")
+			ac.send("OK")
 			return nil
 		},
 		"list": func(ctx context.Context, cmd string, params []string) error {
@@ -142,12 +142,6 @@ var (
 				buf.WriteString("\n")
 			})
 			ac.send(buf.String())
-			return nil
-		},
-		"buildindex": func(ctx context.Context, cmd string, params []string) error {
-			// send ok
-			ac := GetAdminConnContext(ctx)
-			ac.send("OK")
 			return nil
 		},
 		"help": func(ctx context.Context, cmd string, params []string) error {
@@ -174,5 +168,4 @@ func (ac *adminConn) serve() error {
 			ac.send("unknown command")
 		}
 	}
-	return nil
 }
