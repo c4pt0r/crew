@@ -98,6 +98,10 @@ var (
 	_rootNode *node
 )
 
+func getRootNode() *node {
+	return _rootNode
+}
+
 func init() {
 	flag.Parse()
 	var err error
@@ -228,7 +232,6 @@ func (n *node) getSubNodes() ([]*node, error) {
 		}
 		ns = append(ns, node)
 	}
-
 	// sort the nodes
 	sortNodes(ns)
 	return ns, nil
@@ -514,7 +517,7 @@ func pageFromNode(n *node) *page {
 }
 
 func sitemapPage() *page {
-	p := pageFromNode(_rootNode)
+	p := pageFromNode(getRootNode())
 	p.bodyRender = func(p *page, ctx context.Context) ([]byte, error) {
 		var buf bytes.Buffer
 		buf.WriteString("<h1> Site map </h1>")
@@ -592,7 +595,7 @@ func printList(from *node, to *node) (string, error) {
 }
 
 func (p *page) renderNav() ([]byte, error) {
-	out, err := printList(_rootNode, p.node)
+	out, err := printList(getRootNode(), p.node)
 	if err != nil {
 		return nil, err
 	}
@@ -661,7 +664,7 @@ func getQueryParams(r *http.Request) map[string]string {
 }
 
 func httpServer(addr string) error {
-	http.HandleFunc("/ws", websocketHandler)
+	http.HandleFunc("/_ws", websocketHandler)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// get the path from the request, and remove the leading slash

@@ -9,4 +9,8 @@ require (
 	github.com/ybbus/jsonrpc/v3 v3.1.4
 )
 
-require golang.org/x/net v0.17.0 // indirect
+require (
+	github.com/go-ego/gse v0.80.2 // indirect
+	github.com/vcaesar/cedar v0.20.1 // indirect
+	golang.org/x/net v0.17.0 // indirect
+)
