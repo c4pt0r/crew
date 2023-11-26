@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"strings"
+	"errors"
 
 	"github.com/c4pt0r/log"
 	"github.com/gorilla/websocket"
@@ -22,66 +23,85 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Handle WebSocket messages here
-	for {
-		messageType, p, err := conn.ReadMessage()
-		if err != nil {
-			log.E(err)
-			return
-		}
-		// You can process WebSocket messages here and send responses back to the client
-		// For example:
-		response := []byte("WebSocket Server: Received message: " + string(p))
-		conn.WriteMessage(messageType, response)
-
+	ac := &adminConn{
+		wsConn: conn,
+		token: "hello",
+		authed: false,
 	}
-}
+	defer ac.close()
+	ac.welcome()
 
-type adminCmdhandlerFunc func(*adminConn, []byte)
+	if !ac.auth() {
+		ac.send("need auth")
+		return
+	}
+
+	ac.serve()
+}
 
 type adminConn struct {
-	Conn   *websocket.Conn
+	wsConn   *websocket.Conn
 	token  string
 	authed bool
-
-	// handlers
-	handlers map[string]adminCmdhandlerFunc
 }
 
-func (ac *adminConn) send(msg []byte) {
-	ac.Conn.WriteMessage(websocket.TextMessage, msg)
+func (ac *adminConn) send(msg string) {
+	ac.wsConn.WriteMessage(websocket.TextMessage, []byte(msg))
 }
 
 func (ac *adminConn) close() {
-	ac.Conn.Close()
+	ac.wsConn.Close()
 }
 
-func (ac *adminConn) read() ([]byte, error) {
-	_, msg, err := ac.Conn.ReadMessage()
-	return msg, err
+
+func (ac *adminConn) readCommand() (string, []string, error) {
+	_, msg, err := ac.wsConn.ReadMessage()
+	if err != nil {
+		return "", nil, err
+	}
+	fields := strings.Fields(string(msg))
+	if len(fields) == 0 {
+		return "", nil, errors.New("invalid command")
+	}
+	cmd := strings.ToLower(fields[0])
+	return cmd, fields[1:], nil
 }
 
 func (ac *adminConn) welcome() {
-	ac.send([]byte("Welcome to the admin console"))
+	ac.send("Welcome to the admin console")
 }
 
-func (ac *adminConn) handle(msg []byte) {
+func (ac *adminConn) auth() bool {
+	cmd, params, err := ac.readCommand()
+	if err != nil {
+		log.E(err)
+		return false
+	}
+	if cmd != "auth" || len(params) == 0 {
+		return false
+	}
 
+	if ac.token != params[0] {
+		return false
+	}
+	return true
 }
 
-func (ac *adminConn) handleAuth(msg []byte) {
-	if ac.authed {
-		ac.send([]byte("Already authed"))
-		return
+func (ac *adminConn) serve() error {
+	for {
+		cmd, params, err := ac.readCommand()
+		if err != nil {
+			return err
+		}
+		switch cmd {
+		case "quit":
+			ac.send("bye!")
+			return nil
+		case "echo":
+			ac.send(strings.Join(params, " "))
+			return nil
+		}
 	}
-	line := string(msg)
-	fields := strings.Fields(line)
-	if len(fields) != 2 {
-		ac.send([]byte("Invalid auth command"))
-		return
-	}
-	if fields[0] != "auth" {
-		ac.send([]byte("Invalid auth command"))
-		return
-	}
+	return nil
 }
+
