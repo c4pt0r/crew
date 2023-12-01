@@ -1,32 +1,64 @@
-body { display: flex; flex-wrap: wrap; font-family: sans; }
+body { 
+    display: flex;
+    flex-wrap: wrap; 
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; 
+    background-color: #1d1f21; /* Dark gray for a subtle tech feel */
+    color: #d1d5db; /* Light gray for text, easy on the eyes */
+    padding: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+    body {
+        background-color: #121417; /* Even darker for dark mode */
+        color: #c9d1d9; /* Slightly lighter text in dark mode */
+    }
+    a {
+        color: #58a6ff; /* Soft blue for links in dark mode */
+    }
+    .hljs {
+        background-color: #121417;
+        color: #abb2bf;
+    }
+    .hljs-deletion, .hljs-number, .hljs-quote, .hljs-selector-class, .hljs-selector-id, .hljs-string, .hljs-template-tag, .hljs-type {
+        color: #e06c75; /* Soft red for some code elements */
+    }
+    .hljs-section, .hljs-title {
+        color: #e5c07b; /* Soft yellow for sections and titles */
+    }
+}
+
 header { flex-basis: 100%; flex-shrink: 0; }
-article { flex-basis: 60%; padding-left: 1em; }
+article { flex-basis: 60%; padding-left: 1em; max-width: 60%; }
 footer { flex-basis: 100%; flex-shrink: 0; }
 header nav { display: flex; justify-content: space-between; }
-nav a, header a { text-decoration: none ; color: inherit; }
+nav a, header a { 
+    text-decoration: none; 
+    color: inherit; 
+    transition: color 0.3s ease; /* Smooth transition for link hover */
+}
+nav a:hover, header a:hover { 
+    color: #e06c75; /* Soft red on hover */
+}
 header h1 span { margin-left: 1em; font-size: 50%; font-style: italic; }
 body > nav { flex-basis: content; padding-right: 1vw; min-width: 16em; }
-nav ul { display: flex; flex-direction: column; list-style-type: none; list-style-position: outside; padding-left: 0;  }
+nav ul { display: flex; flex-direction: column; list-style-type: none; list-style-position: outside; padding-left: 0; }
 nav li ul { padding-left: 0.6em }
 footer { display: flex; justify-content: space-between; }
 
+* { cursor: url(http://9front.org/img/cursor.png), auto;}
 
-@media (prefers-color-scheme: dark) {
-	body {
-		background-color: #000;
-		color: #bdbdbd;
-	}
-        a {
-		color: #56c8ff;
-	}
-	.hljs {
-		background-color: #000;
-		color: #fff;
-	}
-	.hljs-deletion, .hljs-number, .hljs-quote, .hljs-selector-class, .hljs-selector-id, .hljs-string, .hljs-template-tag, .hljs-type {
-		color: #060;
-	}
-	.hljs-section, .hljs-title {
-		color: #090;
-	}
+blockquote {
+    margin-left: 0px;
+    border-left: 10px solid #58a6ff; /* Soft blue border for blockquote */
+    padding: 0.5em 10px;
+    color: #d1d5db; /* Light gray text for blockquote */
+}
+
+hr {
+    border: none;
+    border-top: 1px double #e06c75; /* Soft red for horizontal rule */
+    color: #e06c75;
+    overflow: visible;
+    text-align: center;
+    height: 5px;
 }
