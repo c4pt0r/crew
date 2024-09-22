@@ -259,14 +259,11 @@ func sortNodes(ns []*node) {
 
 func (n *node) getParentNode() (*node, error) {
 	// get the parent directory
+	if n.filepath == _rootDir {
+		return nil, nil
+	}
 	parentDir := path.Dir(n.filepath)
 	// create the node
-	if parentDir == _rootDir {
-		return nil, nil
-	}
-	if parentDir == "." {
-		return nil, nil
-	}
 	return newNodeFromPath(parentDir)
 }
 
