@@ -15,6 +15,8 @@ import (
 	"strings"
 	"text/template"
 
+	"encoding/base64"
+
 	"github.com/c4pt0r/log"
 	"github.com/gomarkdown/markdown"
 )
@@ -165,6 +167,10 @@ type node struct {
 	isHidden    bool
 	tp          NodeType
 	authToken   string
+	basicAuth   struct {
+		username string
+		password string
+	}
 }
 
 type nodeConf struct {
@@ -179,6 +185,10 @@ type nodeConf struct {
 	RpcEndpoint string `json:"rpc_endpoint"`
 	// AuthToken is the token to access the node in header
 	AuthToken string `json:"auth_token"`
+	BasicAuth struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	} `json:"basic_auth"`
 }
 
 func (n *node) URL() string {
@@ -251,6 +261,12 @@ func (n *node) getParentNode() (*node, error) {
 	// get the parent directory
 	parentDir := path.Dir(n.filepath)
 	// create the node
+	if parentDir == _rootDir {
+		return nil, nil
+	}
+	if parentDir == "." {
+		return nil, nil
+	}
 	return newNodeFromPath(parentDir)
 }
 
@@ -398,7 +414,6 @@ func getConfigFileForFile(fpath string) (bool, string, error) {
 		dir, fn := path.Split(fpath)
 		cfgPath = path.Join(dir, fn+".conf.json")
 		return false, cfgPath, nil
-
 	} else {
 		cfgPath = path.Join(fpath, ".conf.json")
 		return true, cfgPath, nil
@@ -419,6 +434,10 @@ func newNodeFromPath(fullname string) (*node, error) {
 	key := ""
 	rpcEndpoint := ""
 	authToken := ""
+	basicAuth := struct {
+		username string
+		password string
+	}{}
 
 	isDir, cfgPath, err := getConfigFileForFile(fpath)
 	if err != nil {
@@ -452,6 +471,10 @@ func newNodeFromPath(fullname string) (*node, error) {
 		if len(cfg.AuthToken) > 0 {
 			authToken = cfg.AuthToken
 		}
+		if len(cfg.BasicAuth.Username) > 0 && len(cfg.BasicAuth.Password) > 0 {
+			basicAuth.username = cfg.BasicAuth.Username
+			basicAuth.password = cfg.BasicAuth.Password
+		}
 	}
 	return &node{
 		filepath:    fpath,
@@ -463,6 +486,7 @@ func newNodeFromPath(fullname string) (*node, error) {
 		key:         key,
 		rpcEndpoint: rpcEndpoint,
 		authToken:   authToken,
+		basicAuth:   basicAuth,
 	}, nil
 }
 
@@ -711,6 +735,20 @@ func httpServer(addr string) error {
 					return
 				}
 			}
+			// Check for basic auth
+			authNode := node
+			for authNode != nil {
+				if authNode.basicAuth.username != "" && authNode.basicAuth.password != "" {
+					auth := r.Header.Get("Authorization")
+					if !checkBasicAuth(auth, authNode.basicAuth.username, authNode.basicAuth.password) {
+						w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+						http.Error(w, "Unauthorized", http.StatusUnauthorized)
+						return
+					}
+					break
+				}
+				authNode, _ = authNode.getParentNode()
+			}
 			page = pageFromNode(node)
 		}
 		ctx := context.WithValue(context.Background(), "params", getQueryParams(r))
@@ -724,6 +762,18 @@ func httpServer(addr string) error {
 		w.Write([]byte(content))
 	})
 	return http.ListenAndServe(addr, nil)
+}
+
+func checkBasicAuth(auth, username, password string) bool {
+	if !strings.HasPrefix(auth, "Basic ") {
+		return false
+	}
+	payload, _ := base64.StdEncoding.DecodeString(auth[6:])
+	pair := strings.SplitN(string(payload), ":", 2)
+	if len(pair) != 2 {
+		return false
+	}
+	return pair[0] == username && pair[1] == password
 }
 
 func main() {
