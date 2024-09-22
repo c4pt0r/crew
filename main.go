@@ -259,7 +259,7 @@ func sortNodes(ns []*node) {
 
 func (n *node) getParentNode() (*node, error) {
 	// get the parent directory
-	if n.filepath == _rootDir {
+	if path.Clean(n.filepath) == path.Clean(_rootDir) {
 		return nil, nil
 	}
 	parentDir := path.Dir(n.filepath)
