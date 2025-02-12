@@ -1,4 +1,0 @@
-{
-    "type": "rpc",
-    "rpc_endpoint": "http://localhost:5001/rpc"
-}

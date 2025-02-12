@@ -19,6 +19,7 @@ import (
 
 	"github.com/c4pt0r/log"
 	"github.com/gomarkdown/markdown"
+	lua "github.com/yuin/gopher-lua"
 )
 
 var (
@@ -129,15 +130,12 @@ type NodeType int
 const (
 	// NodeTypeFile is a file node.
 	NodeTypeFile NodeType = iota
-	NodeTypeRPC
 )
 
 func (ntp NodeType) String() string {
 	switch ntp {
 	case NodeTypeFile:
 		return "file"
-	case NodeTypeRPC:
-		return "rpc"
 	default:
 		return "unknown"
 	}
@@ -147,8 +145,6 @@ func NodeTypeFromStr(s string) NodeType {
 	switch s {
 	case "file":
 		return NodeTypeFile
-	case "rpc":
-		return NodeTypeRPC
 	default:
 		return NodeTypeFile
 	}
@@ -177,7 +173,7 @@ type nodeConf struct {
 	Title    string `json:"title'"`
 	Desc     string `json:"desc"`
 	IsHidden bool   `json:"hidden"`
-	// Type is the type of the node, it can be "file" or "kv"
+	// Type is the type of the node, it can be "file"
 	Tp string `json:"type"`
 	// Key is the key to the node in the database if the node type is "kv", default value is the node URL
 	Key string `json:"key"`
@@ -275,12 +271,14 @@ func (n *node) Render(ctx context.Context) ([]byte, error) {
 	if n.isDir {
 		return n.renderDir(ctx)
 	}
-	if n.ext() == ".md" {
+	switch n.ext() {
+	case ".md":
 		return n.renderMarkdown(ctx)
-	} else if n.ext() == ".html" {
+	case ".html":
 		return n.renderHTML(ctx)
-	} else {
-		// TODO render other types of files
+	case ".lua":
+		return n.renderLua(ctx)
+	default:
 		return n.renderHTML(ctx)
 	}
 }
@@ -461,7 +459,7 @@ func newNodeFromPath(fullname string) (*node, error) {
 		}
 		if len(cfg.Tp) > 0 {
 			tp = cfg.Tp
-			if cfg.Tp == NodeTypeRPC.String() && cfg.RpcEndpoint != "" {
+			if cfg.Tp == NodeTypeFile.String() && cfg.RpcEndpoint != "" {
 				rpcEndpoint = cfg.RpcEndpoint
 			}
 		}
@@ -509,17 +507,7 @@ type page struct {
 	Body        string
 	Title       string
 	Vals        map[string]string
-
-	// for different type
-	bodyRender func(p *page, ctx context.Context) ([]byte, error)
-}
-
-func rpcPageRender(p *page, ctx context.Context) ([]byte, error) {
-	endpoint := p.node.rpcEndpoint
-	log.D("get rpc endpoint:", endpoint)
-	remoteRender := NewJsonRPCRender(endpoint)
-	params := ctx.Value("params").(map[string]string)
-	return remoteRender.Render(p.node.URL(), params)
+	bodyRender  func(p *page, ctx context.Context) ([]byte, error)
 }
 
 func pageFromNode(n *node) *page {
@@ -529,11 +517,6 @@ func pageFromNode(n *node) *page {
 		SubHeadline: *siteSubtitle,
 	}
 	p.Title = n.title
-	switch n.tp {
-	case NodeTypeRPC:
-		p.bodyRender = rpcPageRender
-	default:
-	}
 	return p
 }
 
@@ -685,8 +668,6 @@ func getQueryParams(r *http.Request) map[string]string {
 }
 
 func httpServer(addr string) error {
-	http.HandleFunc("/_ws", websocketHandler)
-
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// get the path from the request, and remove the leading slash
 		var page *page
@@ -746,17 +727,37 @@ func httpServer(addr string) error {
 				}
 				authNode, _ = authNode.getParentNode()
 			}
+			// For .lua files with POST/PUT methods, handle directly
+			if node.ext() == ".lua" && (r.Method == "POST" || r.Method == "PUT") {
+				ctx := context.WithValue(
+					context.WithValue(context.Background(), "params", getQueryParams(r)),
+					"request",
+					r,
+				)
+				content, err := node.Render(ctx)
+				if err != nil {
+					log.E(err)
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				w.Write(content)
+				return
+			}
 			page = pageFromNode(node)
 		}
-		ctx := context.WithValue(context.Background(), "params", getQueryParams(r))
+		// Add request to context
+		ctx := context.WithValue(
+			context.WithValue(context.Background(), "params", getQueryParams(r)),
+			"request",
+			r,
+		)
 		content, err := page.Render(ctx)
 		if err != nil {
 			log.E(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// write the content to the response
-		w.Write([]byte(content))
+		w.Write(content)
 	})
 	return http.ListenAndServe(addr, nil)
 }
@@ -771,6 +772,153 @@ func checkBasicAuth(auth, username, password string) bool {
 		return false
 	}
 	return pair[0] == username && pair[1] == password
+}
+
+func (n *node) renderLua(ctx context.Context) ([]byte, error) {
+	L := lua.NewState()
+	defer L.Close()
+
+	// Create request table
+	reqTable := L.NewTable()
+
+	// Get request from context
+	if r, ok := ctx.Value("request").(*http.Request); ok {
+		// Add method
+		L.SetField(reqTable, "method", lua.LString(r.Method))
+
+		// Add path
+		L.SetField(reqTable, "path", lua.LString(r.URL.Path))
+
+		// Add params
+		params := ctx.Value("params").(map[string]string)
+
+		if r.Method == "POST" || r.Method == "PUT" {
+			// If it's POST/PUT request, try to parse JSON body
+			if r.Header.Get("Content-Type") == "application/json" {
+				var jsonData map[string]interface{}
+				decoder := json.NewDecoder(r.Body)
+				if err := decoder.Decode(&jsonData); err == nil {
+					// Add JSON data to params
+					for k, v := range jsonData {
+						if str, ok := v.(string); ok {
+							params[k] = str
+						} else {
+							// Convert other types to string
+							params[k] = fmt.Sprintf("%v", v)
+						}
+					}
+				}
+			}
+			// If it's POST/PUT request, try to parse form data
+			if r.Header.Get("Content-Type") == "application/x-www-form-urlencoded" {
+				if err := r.ParseForm(); err == nil {
+					for k, v := range r.PostForm {
+						params[k] = v[0]
+					}
+				}
+			}
+		}
+
+		// Create params table
+		paramsTable := L.NewTable()
+		for k, v := range params {
+			L.SetField(paramsTable, k, lua.LString(v))
+		}
+		L.SetField(reqTable, "params", paramsTable)
+
+		// Add query parameters
+		queryTable := L.NewTable()
+		for k, v := range r.URL.Query() {
+			if len(v) > 0 {
+				L.SetField(queryTable, k, lua.LString(v[0]))
+			}
+		}
+		L.SetField(reqTable, "query", queryTable)
+
+		// Add headers
+		headerTable := L.NewTable()
+		for k, v := range r.Header {
+			if len(v) > 0 {
+				L.SetField(headerTable, k, lua.LString(v[0]))
+			}
+		}
+		L.SetField(reqTable, "headers", headerTable)
+
+		// Set the request table as a global variable
+		L.SetGlobal("request", reqTable)
+	}
+
+	content, err := n.rawContent()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := L.DoString(string(content)); err != nil {
+		return nil, fmt.Errorf("error executing lua file: %v", err)
+	}
+
+	// Get the appropriate function based on HTTP method
+	var fnName string
+	if r, ok := ctx.Value("request").(*http.Request); ok {
+		switch r.Method {
+		case "GET":
+			fnName = "render"
+		case "POST":
+			fnName = "post"
+		case "PUT":
+			fnName = "put"
+		default:
+			fnName = "render"
+		}
+	} else {
+		fnName = "render"
+	}
+
+	fn := L.GetGlobal(fnName)
+	if fn.Type() != lua.LTFunction {
+		// Fallback to render if method-specific function not found
+		if fnName != "render" {
+			fn = L.GetGlobal("render")
+			if fn.Type() != lua.LTFunction {
+				return nil, fmt.Errorf("render function not found in lua file")
+			}
+		} else {
+			return nil, fmt.Errorf("%s function not found in lua file", fnName)
+		}
+	}
+
+	// Call function with request table as parameter
+	L.Push(fn)
+	L.Push(reqTable)
+	if err := L.PCall(1, 2, nil); err != nil { // Changed to expect 2 return values
+		return nil, fmt.Errorf("error calling %s function: %v", fnName, err)
+	}
+
+	// Get status code and content
+	statusCode := L.Get(-2) // First return value
+	ret := L.Get(-1)        // Second return value
+	L.Pop(2)
+
+	if statusCode.Type() != lua.LTNumber {
+		return nil, fmt.Errorf("%s function must return a number as first return value", fnName)
+	}
+	if ret.Type() != lua.LTString {
+		return nil, fmt.Errorf("%s function must return a string as second return value", fnName)
+	}
+
+	// Set response status code in context
+	if r, ok := ctx.Value("request").(*http.Request); ok {
+		if w, ok := r.Context().Value("responseWriter").(http.ResponseWriter); ok {
+			w.WriteHeader(int(lua.LVAsNumber(statusCode)))
+		}
+	}
+
+	// check status code is 200
+	if lua.LVAsNumber(statusCode) != 200 {
+		return nil, fmt.Errorf("status code: %d msg: %s", lua.LVAsNumber(statusCode), ret.String())
+	}
+
+	return []byte(ret.String()), nil
 }
 
 func main() {
