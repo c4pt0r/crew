@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"text/template"
 
 	"encoding/base64"
@@ -99,6 +100,36 @@ var (
 var (
 	// for render navbar & sitemap
 	_rootNode *node
+)
+
+// state is the global state for lua scripts
+type state struct {
+	m map[string]interface{}
+	sync.RWMutex
+}
+
+func (s *state) Get(key string) interface{} {
+	s.RLock()
+	defer s.RUnlock()
+	return s.m[key]
+}
+
+func (s *state) Set(key string, value interface{}) {
+	s.Lock()
+	defer s.Unlock()
+	s.m[key] = value
+}
+
+func (s *state) Delete(key string) {
+	s.Lock()
+	defer s.Unlock()
+	delete(s.m, key)
+}
+
+var (
+	_state = &state{
+		m: make(map[string]interface{}),
+	}
 )
 
 func getRootNode() *node {
@@ -759,6 +790,7 @@ func httpServer(addr string) error {
 		}
 		w.Write(content)
 	})
+	log.I("Starting server on", addr)
 	return http.ListenAndServe(addr, nil)
 }
 
@@ -777,6 +809,68 @@ func checkBasicAuth(auth, username, password string) bool {
 func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 	L := lua.NewState()
 	defer L.Close()
+
+	// Add globalState table
+	stateTable := L.NewTable()
+
+	// Add get method
+	L.SetField(stateTable, "get", L.NewFunction(func(L *lua.LState) int {
+		key := L.CheckString(1)
+		value := _state.Get(key)
+		if value == nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+
+		// Convert Go value to Lua value
+		switch v := value.(type) {
+		case string:
+			L.Push(lua.LString(v))
+		case int:
+			L.Push(lua.LNumber(v))
+		case float64:
+			L.Push(lua.LNumber(v))
+		case bool:
+			L.Push(lua.LBool(v))
+		default:
+			L.Push(lua.LNil)
+		}
+		return 1
+	}))
+
+	// Add set method
+	L.SetField(stateTable, "set", L.NewFunction(func(L *lua.LState) int {
+		key := L.CheckString(1)
+		value := L.Get(2)
+
+		// Convert Lua value to Go value
+		var goValue interface{}
+		switch value.Type() {
+		case lua.LTString:
+			goValue = string(value.(lua.LString))
+		case lua.LTNumber:
+			goValue = float64(value.(lua.LNumber))
+		case lua.LTBool:
+			goValue = bool(value.(lua.LBool))
+		default:
+			L.Push(lua.LBool(false))
+			return 1
+		}
+
+		_state.Set(key, goValue)
+		L.Push(lua.LBool(true))
+		return 1
+	}))
+
+	// Add delete method
+	L.SetField(stateTable, "delete", L.NewFunction(func(L *lua.LState) int {
+		key := L.CheckString(1)
+		_state.Delete(key)
+		return 0
+	}))
+
+	// Set globalState table as a global variable
+	L.SetGlobal("globalState", stateTable)
 
 	// Add createNode function
 	L.SetGlobal("createNode", L.NewFunction(func(L *lua.LState) int {
@@ -820,6 +914,40 @@ func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 		}
 
 		L.Push(lua.LString(string(content)))
+		return 1
+	}))
+
+	// Add removeNode function
+	L.SetGlobal("removeNode", L.NewFunction(func(L *lua.LState) int {
+		nodePath := L.CheckString(1)
+
+		// Get absolute path
+		absPath := filepath.Join(_rootDir, nodePath)
+
+		// Check if it's a directory
+		fileInfo, err := os.Stat(absPath)
+		if err != nil {
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		// Don't allow directory removal
+		if fileInfo.IsDir() {
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString("cannot remove directory"))
+			return 2
+		}
+
+		// Remove the file
+		err = os.Remove(absPath)
+		if err != nil {
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		L.Push(lua.LBool(true))
 		return 1
 	}))
 

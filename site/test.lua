@@ -2,6 +2,9 @@ function render(request)
     local nodePath = request.params["path"] or ""
     local content = ""
     local error = ""
+
+	local readCount = globalState.get("readCount") or 0
+	globalState.set("readCount", readCount + 1)
     
     if nodePath ~= "" then
         content, error = readNode(nodePath)
