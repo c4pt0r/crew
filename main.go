@@ -778,6 +778,51 @@ func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 	L := lua.NewState()
 	defer L.Close()
 
+	// Add createNode function
+	L.SetGlobal("createNode", L.NewFunction(func(L *lua.LState) int {
+		nodePath := L.CheckString(1)
+		content := L.CheckString(2)
+
+		// Get absolute path
+		absPath := filepath.Join(_rootDir, nodePath)
+
+		// Create parent directories if they don't exist
+		if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		// Write content to file
+		if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		L.Push(lua.LBool(true))
+		return 1
+	}))
+
+	// Add readNode function
+	L.SetGlobal("readNode", L.NewFunction(func(L *lua.LState) int {
+		nodePath := L.CheckString(1)
+
+		// Get absolute path
+		absPath := filepath.Join(_rootDir, nodePath)
+
+		// Read file content
+		content, err := os.ReadFile(absPath)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		L.Push(lua.LString(string(content)))
+		return 1
+	}))
+
 	// Create request table
 	reqTable := L.NewTable()
 
