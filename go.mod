@@ -9,4 +9,4 @@ require (
 	github.com/gomarkdown/markdown v0.0.0-20221013030248-663e2500819c
 )
 
-require github.com/yuin/gopher-lua v1.1.1 // indirect
+require github.com/yuin/gopher-lua v1.1.1

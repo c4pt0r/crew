@@ -3,12 +3,12 @@ function render(request)
     local content = ""
     local error = ""
 
-	local readCount = globalState.get("readCount") or 0
-	globalState.set("readCount", readCount + 1)
+	local readCount = crew.state.get("readCount") or 0
+	crew.state.set("readCount", readCount + 1)
     
     if nodePath ~= "" then
-        content, error = readNode(nodePath)
-        if error then
+        content = crew.readNode(nodePath)
+        if not content then
             content = ""
         end
     end
@@ -143,28 +143,27 @@ function render(request)
                     body: JSON.stringify(data)
                 });
                 
-                const result = await response.json();
-                
-                responseDiv.style.display = 'block';
-                if (result.status === 'success') {
-                    responseDiv.innerHTML = `
-                        <div class="success-message">
-                            <h3>Save Successful!</h3>
-                            <p>Node path: ${result.data.nodePath}</p>
-                        </div>
-                    `;
-                    // Update URL with the node path
-                    const url = new URL(window.location);
-                    url.searchParams.set('path', data.nodePath);
-                    window.history.pushState({}, '', url);
-                } else {
-                    throw new Error(result.message || 'Save failed');
+                if (!response.ok) {
+                    throw new Error(await response.text());
                 }
+
+                const result = await response.json();
+                responseDiv.style.display = 'block';
+                responseDiv.innerHTML = `
+                    <div class="success-message">
+                        <h3>Save Successful!</h3>
+                        <p>Node path: ${result.data.nodePath}</p>
+                    </div>
+                `;
+                // Update URL with the node path
+                const url = new URL(window.location);
+                url.searchParams.set('path', data.nodePath);
+                window.history.pushState({}, '', url);
             } catch (error) {
                 responseDiv.style.display = 'block';
                 responseDiv.innerHTML = `
                     <div class="error-message">
-                        <p>Error: ${error || 'Save failed, please try again'}</p>
+                        <p>Error: ${error.message || 'Save failed, please try again'}</p>
                     </div>
                 `;
             } finally {
@@ -258,24 +257,23 @@ function render(request)
                     body: JSON.stringify({ nodePath: path })
                 });
                 
-                const result = await response.json();
-                
-                responseDiv.style.display = 'block';
-                if (result.status === 'success') {
-                    responseDiv.innerHTML = `
-                        <div class="success-message">
-                            <p>${result.message}</p>
-                        </div>
-                    `;
-                    document.getElementById('content').value = '';
-                } else {
-                    throw new Error(result.message || 'Delete failed');
+                if (!response.ok) {
+                    throw new Error(await response.text());
                 }
+
+                const result = await response.json();
+                responseDiv.style.display = 'block';
+                responseDiv.innerHTML = `
+                    <div class="success-message">
+                        <p>${result.message}</p>
+                    </div>
+                `;
+                document.getElementById('content').value = '';
             } catch (error) {
                 responseDiv.style.display = 'block';
                 responseDiv.innerHTML = `
                     <div class="error-message">
-                        <p>Error: ${error || 'Delete failed, please try again'}</p>
+                        <p>Error: ${error.message || 'Delete failed, please try again'}</p>
                     </div>
                 `;
             }
@@ -289,27 +287,19 @@ function post(request)
     local content = request.params["content"]
     
     if not nodePath or nodePath == "" then
-        return 400, '{"status": "error", "message": "Node path is required"}'
+        return 400, "Node path is required"
     end
     
     if not content then
-        return 400, '{"status": "error", "message": "Content is required"}'
+        return 400, "Content is required"
     end
     
-    local success = createNode(nodePath, content)
+    local success = crew.createNode(nodePath, content)
     if not success then
-        return 500, '{"status": "error", "message": "Failed to save node"}'
+        return 500, "Failed to save node"
     end
     
-    return 200, string.format([[
-        {
-            "status": "success",
-            "message": "Node saved successfully",
-            "data": {
-                "nodePath": "%s"
-            }
-        }
-    ]], nodePath)
+    return 200, string.format('{"status": "success", "message": "Node saved successfully", "data": {"nodePath": "%s"}}', nodePath)
 end
 
 function put(request)
@@ -321,13 +311,13 @@ function delete(request)
     local nodePath = request.params["nodePath"]
     
     if not nodePath or nodePath == "" then
-        return 200, '{"status": "error", "message": "Node path is required"}'
+        return 400, "Node path is required"
     end
     
-    local success = removeNode(nodePath)
+    local success = crew.removeNode(nodePath)
     if not success then
-        return 200, '{"status": "error", "message": "Failed to delete node"}'
+        return 500, "Failed to delete node"
     end
     
-    return 200, [[{"status": "success", "message": "Node deleted successfully"}]]
+    return 200, '{"status": "success", "message": "Node deleted successfully"}'
 end

@@ -810,7 +810,10 @@ func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 	L := lua.NewState()
 	defer L.Close()
 
-	// Add globalState table
+	// Create crew table
+	crewTable := L.NewTable()
+
+	// Create state table
 	stateTable := L.NewTable()
 
 	// Add get method
@@ -869,25 +872,22 @@ func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 		return 0
 	}))
 
-	// Set globalState table as a global variable
-	L.SetGlobal("globalState", stateTable)
+	// Add state table to crew
+	L.SetField(crewTable, "state", stateTable)
 
-	// Add createNode function
-	L.SetGlobal("createNode", L.NewFunction(func(L *lua.LState) int {
+	// Add node functions to crew
+	L.SetField(crewTable, "createNode", L.NewFunction(func(L *lua.LState) int {
 		nodePath := L.CheckString(1)
 		content := L.CheckString(2)
 
-		// Get absolute path
 		absPath := filepath.Join(_rootDir, nodePath)
 
-		// Create parent directories if they don't exist
 		if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
 			L.Push(lua.LBool(false))
 			L.Push(lua.LString(err.Error()))
 			return 2
 		}
 
-		// Write content to file
 		if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
 			L.Push(lua.LBool(false))
 			L.Push(lua.LString(err.Error()))
@@ -898,14 +898,10 @@ func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 		return 1
 	}))
 
-	// Add readNode function
-	L.SetGlobal("readNode", L.NewFunction(func(L *lua.LState) int {
+	L.SetField(crewTable, "readNode", L.NewFunction(func(L *lua.LState) int {
 		nodePath := L.CheckString(1)
-
-		// Get absolute path
 		absPath := filepath.Join(_rootDir, nodePath)
 
-		// Read file content
 		content, err := os.ReadFile(absPath)
 		if err != nil {
 			L.Push(lua.LNil)
@@ -917,14 +913,10 @@ func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 		return 1
 	}))
 
-	// Add removeNode function
-	L.SetGlobal("removeNode", L.NewFunction(func(L *lua.LState) int {
+	L.SetField(crewTable, "removeNode", L.NewFunction(func(L *lua.LState) int {
 		nodePath := L.CheckString(1)
-
-		// Get absolute path
 		absPath := filepath.Join(_rootDir, nodePath)
 
-		// Check if it's a directory
 		fileInfo, err := os.Stat(absPath)
 		if err != nil {
 			L.Push(lua.LBool(false))
@@ -993,6 +985,9 @@ func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 		L.Push(lua.LBool(true))
 		return 1
 	}))
+
+	// Set crew table as global
+	L.SetGlobal("crew", crewTable)
 
 	// Create request table
 	reqTable := L.NewTable()
@@ -1124,16 +1119,17 @@ func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("%s function must return a string as second return value", fnName)
 	}
 
-	// Set response status code in context
+	// Set response status code
 	if r, ok := ctx.Value("request").(*http.Request); ok {
 		if w, ok := r.Context().Value("responseWriter").(http.ResponseWriter); ok {
 			w.WriteHeader(int(lua.LVAsNumber(statusCode)))
 		}
 	}
 
-	// check status code is 200
-	if lua.LVAsNumber(statusCode) != 200 {
-		return nil, fmt.Errorf("status code: %d msg: %s", lua.LVAsNumber(statusCode), ret.String())
+	// Return error if status code is not 2xx
+	code := int(lua.LVAsNumber(statusCode))
+	if code < 200 || code >= 300 {
+		return nil, fmt.Errorf("status code: %d msg: %s", code, ret.String())
 	}
 
 	return []byte(ret.String()), nil
