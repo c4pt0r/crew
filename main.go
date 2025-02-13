@@ -758,10 +758,10 @@ func httpServer(addr string) error {
 				}
 				authNode, _ = authNode.getParentNode()
 			}
-			// For .lua files with POST/PUT methods, handle directly
-			if node.ext() == ".lua" && (r.Method == "POST" || r.Method == "PUT") {
+			// For .lua files with POST/PUT/DELETE methods, handle directly
+			if node.ext() == ".lua" && (r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE") {
 				ctx := context.WithValue(
-					context.WithValue(context.Background(), "params", getQueryParams(r)),
+					context.Background(),
 					"request",
 					r,
 				)
@@ -778,7 +778,7 @@ func httpServer(addr string) error {
 		}
 		// Add request to context
 		ctx := context.WithValue(
-			context.WithValue(context.Background(), "params", getQueryParams(r)),
+			context.Background(),
 			"request",
 			r,
 		)
@@ -932,19 +932,62 @@ func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 			return 2
 		}
 
-		// Don't allow directory removal
 		if fileInfo.IsDir() {
-			L.Push(lua.LBool(false))
-			L.Push(lua.LString("cannot remove directory"))
-			return 2
-		}
+			// Read directory contents
+			entries, err := os.ReadDir(absPath)
+			if err != nil {
+				L.Push(lua.LBool(false))
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
 
-		// Remove the file
-		err = os.Remove(absPath)
-		if err != nil {
-			L.Push(lua.LBool(false))
-			L.Push(lua.LString(err.Error()))
-			return 2
+			// Check if directory is empty (ignoring hidden files and config files)
+			hasVisibleFiles := false
+			for _, entry := range entries {
+				if !isReservedName(entry.Name()) {
+					hasVisibleFiles = true
+					break
+				}
+			}
+
+			if hasVisibleFiles {
+				L.Push(lua.LBool(false))
+				L.Push(lua.LString("cannot remove non-empty directory"))
+				return 2
+			}
+
+			// Remove the empty directory and its config file
+			configPath := filepath.Join(absPath, ".conf.json")
+			if _, err := os.Stat(configPath); err == nil {
+				if err := os.Remove(configPath); err != nil {
+					L.Push(lua.LBool(false))
+					L.Push(lua.LString(fmt.Sprintf("failed to remove config file: %v", err)))
+					return 2
+				}
+			}
+
+			if err := os.Remove(absPath); err != nil {
+				L.Push(lua.LBool(false))
+				L.Push(lua.LString(fmt.Sprintf("failed to remove directory: %v", err)))
+				return 2
+			}
+		} else {
+			// Remove the file and its config file
+			if err := os.Remove(absPath); err != nil {
+				L.Push(lua.LBool(false))
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+
+			// Try to remove the config file if it exists
+			configPath := absPath + ".conf.json"
+			if _, err := os.Stat(configPath); err == nil {
+				if err := os.Remove(configPath); err != nil {
+					L.Push(lua.LBool(false))
+					L.Push(lua.LString(fmt.Sprintf("file removed but failed to remove config file: %v", err)))
+					return 2
+				}
+			}
 		}
 
 		L.Push(lua.LBool(true))
@@ -963,9 +1006,9 @@ func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 		L.SetField(reqTable, "path", lua.LString(r.URL.Path))
 
 		// Add params
-		params := ctx.Value("params").(map[string]string)
+		params := getQueryParams(r)
 
-		if r.Method == "POST" || r.Method == "PUT" {
+		if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" {
 			// If it's POST/PUT request, try to parse JSON body
 			if r.Header.Get("Content-Type") == "application/json" {
 				var jsonData map[string]interface{}
@@ -1040,6 +1083,8 @@ func (n *node) renderLua(ctx context.Context) ([]byte, error) {
 			fnName = "post"
 		case "PUT":
 			fnName = "put"
+		case "DELETE":
+			fnName = "delete"
 		default:
 			fnName = "render"
 		}

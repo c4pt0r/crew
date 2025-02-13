@@ -9,7 +9,7 @@ If you want to deply crew in production, I highly recommend that you put it unde
 <i>Well, I also highly suggest you don't use it for something important, after all I didn't do any optimization at all (I certainly know about caching)</i>
 
 
-In a hurry
+In a hurry!
 ===============
 
 ```

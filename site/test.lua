@@ -27,13 +27,14 @@ function render(request)
     end
     
     return 200, [[
-        <h1>Node Editor</h1>
+        <h3>Node Editor</h3>
         <form id="nodeForm" onsubmit="handleSubmit(event)">
             <div style="margin-bottom: 1rem;">
                 <label for="nodePath">Node Path:</label>
                 <div style="display: flex; gap: 0.5rem;">
                     <input type="text" id="nodePath" name="nodePath" value="]] .. nodePath .. [[" required>
                     <button type="button" onclick="loadContent()" style="background-color: #2196F3;">Load</button>
+                    <button type="button" onclick="confirmDelete()" style="background-color: #dc3545;">Remove</button>
                 </div>
             </div>
             
@@ -163,7 +164,7 @@ function render(request)
                 responseDiv.style.display = 'block';
                 responseDiv.innerHTML = `
                     <div class="error-message">
-                        <p>Error: ${error.message || 'Save failed, please try again'}</p>
+                        <p>Error: ${error || 'Save failed, please try again'}</p>
                     </div>
                 `;
             } finally {
@@ -229,6 +230,56 @@ function render(request)
                 `;
             }
         }
+
+        async function confirmDelete() {
+            const path = document.getElementById('nodePath').value;
+            const responseDiv = document.getElementById('response');
+            
+            if (!path) {
+                responseDiv.style.display = 'block';
+                responseDiv.innerHTML = `
+                    <div class="error-message">
+                        <p>Error: Please enter a node path</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to delete the node: ${path}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(window.location.href, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ nodePath: path })
+                });
+                
+                const result = await response.json();
+                
+                responseDiv.style.display = 'block';
+                if (result.status === 'success') {
+                    responseDiv.innerHTML = `
+                        <div class="success-message">
+                            <p>${result.message}</p>
+                        </div>
+                    `;
+                    document.getElementById('content').value = '';
+                } else {
+                    throw new Error(result.message || 'Delete failed');
+                }
+            } catch (error) {
+                responseDiv.style.display = 'block';
+                responseDiv.innerHTML = `
+                    <div class="error-message">
+                        <p>Error: ${error || 'Delete failed, please try again'}</p>
+                    </div>
+                `;
+            }
+        }
         </script>
     ]]
 end
@@ -264,4 +315,19 @@ end
 function put(request)
     -- PUT requests will be returned directly
     return 200, '{"status": "updated", "message": "Data updated"}'
+end
+
+function delete(request)
+    local nodePath = request.params["nodePath"]
+    
+    if not nodePath or nodePath == "" then
+        return 200, '{"status": "error", "message": "Node path is required"}'
+    end
+    
+    local success = removeNode(nodePath)
+    if not success then
+        return 200, '{"status": "error", "message": "Failed to delete node"}'
+    end
+    
+    return 200, [[{"status": "success", "message": "Node deleted successfully"}]]
 end
