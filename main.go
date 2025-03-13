@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ var (
 	// customPageTpl is the path to a custom page template.
 	customPageTpl   = flag.String("page-tpl", "", "custom page template file, use -print-page-tpl to print the default template")
 	printDefaultTpl = flag.Bool("print-default-page-template", false, "print the default page template")
+	basenameMode    = flag.Bool("basename-mode", false, "run crew in basename mode, rendering URLs without .md suffix")
 	// _rootDir is the absolute path to the root directory
 	_rootDir string
 	// addr is the address to listen on.
@@ -233,6 +235,11 @@ func (n *node) URL() string {
 	relPath = strings.Replace(relPath, " ", "_", -1)
 	// add the leading slash
 	relPath = "/" + relPath
+
+	// trim ".md" suffix from node URL if running in basename mode
+	if *basenameMode {
+		relPath = strings.TrimSuffix(relPath, ".md")
+	}
 	return relPath
 }
 
@@ -713,6 +720,12 @@ func httpServer(addr string) error {
 		} else {
 			// get the node for the path
 			fpath := filepath.Join(_rootDir, path)
+
+			// fallback to adding "*.md" suffix to file path if no file found
+			// this ensures correct functioning of basename mode, disabled by default
+			if _, err := os.Stat(fpath); errors.Is(err, os.ErrNotExist) {
+				fpath = filepath.Join(_rootDir, path+".md")
+			}
 			node, err := newNodeFromPath(fpath)
 			if err != nil {
 				if os.IsNotExist(err) {
