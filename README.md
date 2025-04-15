@@ -8,4 +8,5 @@ it basically is a poor clone of [werc](http://werc.cat-v.org/)
 Who's using?
 ================
 
-[http://0xffff.me](http://0xffff.me)
+- [http://0xffff.me](http://0xffff.me)
+- [https://museum.tiredsysadmin.cc/](https://museum.tiredsysadmin.cc/)
